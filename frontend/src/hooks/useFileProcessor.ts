@@ -8,7 +8,7 @@ export function useFileProcessor() {
   const [originalFile, setOriginalFile] = useState<File | null>(null)
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const BASE_URL = 'http://localhost:8000'
+  const BASE_URL = process.env.API_BASE_URL || 'http://localhost:8000'
 
   const processFile = async (file: File, trainingData: any) => {
     try {
