@@ -7,7 +7,6 @@ import { useFileProcessor } from '@/hooks/useFileProcessor'
 import FileUpload from '@/components/FileUpload'
 import DuplicateGroup from '@/components/DuplicateGroups'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Progress } from '@/components/ui/progress'
 import { AlertCircle, CheckCircle2 } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import dynamic from 'next/dynamic'
@@ -61,6 +60,7 @@ export default function Home() {
   }
 
   const handleSelectRow = (clusterId: number, rowIndex: number, record: any, isSelected: boolean) => {
+    console.log(duplicates)
     setSelectedRecords(prev => {
       const newState = { ...prev }
       if (!newState[clusterId]) {
@@ -151,9 +151,24 @@ export default function Home() {
       setSelectedRecords({})
       setShowConfetti(false)
       await processFile(file, trainingPairs)
-      // setTrainingData(null)
+      setTrainingData(null)
       setIsFinishLoading(false)
     }
+  }
+
+  const handleDownloadDeduplicated = () => {
+    const recordsToRemove = Object.values(selectedRecords)
+      .flat()
+      .map(record => +record.record_id);
+    console.log(recordsToRemove)
+    // Show warning if no duplicates are selected for removal
+    if (recordsToRemove.length === 0) {
+      alert("No duplicates selected for removal. The downloaded file will be identical to the original.");
+      return;
+    }
+
+    // Download file excluding the selected records
+    downloadFile(recordsToRemove);
   }
 
   const renderTrainingInterface = () => {
@@ -193,22 +208,23 @@ export default function Home() {
 
     const currentPair = trainingData[currentPairIndex]
 
-    // Count total responses (excluding uncertain)
+    // Count yes and no responses separately
+    const yesResponses = Object.values(userResponses).filter(r => r === 'y').length
+    const noResponses = Object.values(userResponses).filter(r => r === 'n').length
     const totalResponses = Object.values(userResponses).filter(r => r !== 'u').length
-    const showFinishButton = totalResponses >= 15
-
+    const hasEnoughResponses = yesResponses >= 2 && noResponses >= 2 && totalResponses >= 15
+    
     return (
       <Card className="mb-8">
         <CardHeader>
           <CardTitle>Are these records duplicates?</CardTitle>
           <div className="text-sm text-muted-foreground mt-2">
-            Progress: {totalResponses} of minimum 15 responses
-            <p className="mt-1">
-              Total training pairs available: {trainingData.length}
+            <p>
+              Progress: {totalResponses}/15 responses (Yes: {yesResponses}/2, No: {noResponses}/2)
             </p>
-            {!showFinishButton && (
+            {!hasEnoughResponses && (
               <p className="text-destructive mt-1">
-                You need at least 15 responses to finish training
+                Need at least 2 of each response type and 15 total responses
               </p>
             )}
           </div>
@@ -230,17 +246,17 @@ export default function Home() {
               </Button>
               <Button
                 onClick={() => handleTrainingResponse('n')}
-                variant="destructive"
+                variant="default"
               >
                 No
               </Button>
               <Button
                 onClick={() => handleTrainingResponse('u')}
-                variant="secondary"
+                variant="default"
               >
                 Uncertain
               </Button>
-              {showFinishButton && (
+              {hasEnoughResponses && (
                 <Button
                   onClick={handleFinishTraining}
                   variant="default"
@@ -284,14 +300,14 @@ export default function Home() {
           <p className="text-muted-foreground">Upload your file and let us handle the duplicates for you</p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        {!trainingData && (<div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
           <div className="space-y-4">
-            <Card className="border-none shadow-md">
+            <Card className="border-none shadow-md h-full">
               <CardHeader className="pb-4">
                 <CardTitle className="text-xl font-semibold">Upload File</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <FileUpload onFileUpload={handleFileUpload} handleClearAll={handleClearAll} file={file} />
+                <FileUpload onFileUpload={handleFileUpload} handleClearAll={handleClearAll} file={file} isLoading={isLoading} />
                 {file && (
                   <div className="flex gap-2">
                     <Button
@@ -332,9 +348,21 @@ export default function Home() {
 
           <FilePreview file={file} />
         </div>
+        )}
 
         {/* Training interface */}
-        {trainingData && renderTrainingInterface()}
+        {trainingData && !duplicates.length && (
+          <div className="flex justify-end mb-4">
+            <Button
+              variant="outline"
+              onClick={handleClearAll}
+              className="button-hover shadow-md"
+            >
+              Reset
+            </Button>
+          </div>
+        )}
+        {trainingData && !duplicates.length && renderTrainingInterface()}
 
         {error && (
           <Alert variant="destructive" className="mb-4 glass-effect">
@@ -364,9 +392,18 @@ export default function Home() {
         {duplicates.length > 0 && (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-semibold bg-gradient-to-r from-primary to-primary/80 bg-clip-text text-transparent">
-                Duplicate Groups Found
-              </h2>
+              <div className="flex items-center gap-4">
+                <h2 className="text-2xl font-semibold bg-gradient-to-r from-primary to-primary/80 bg-clip-text text-transparent">
+                  Duplicate Groups Found
+                </h2>
+                <Button
+                  variant="outline"
+                  onClick={handleClearAll}
+                  className="button-hover shadow-md"
+                >
+                  Reset
+                </Button>
+              </div>
               <div className="flex gap-2">
                 <Button
                   onClick={handleRemoveAllDuplicates}
@@ -383,7 +420,7 @@ export default function Home() {
                   Download with Duplicates
                 </Button>
                 <Button
-                  onClick={() => downloadFile(Object.values(selectedRecords).flat().map(record => record.record_id))}
+                  onClick={handleDownloadDeduplicated}
                   className="bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 button-hover shadow-md"
                 >
                   <CheckCircle2 className="mr-2 h-4 w-4" />

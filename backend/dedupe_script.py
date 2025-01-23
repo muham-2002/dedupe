@@ -1,6 +1,7 @@
 #Chala hua code
+# import dedupe.variables
+# import dedupe.variables.string
 import dedupe.variables
-import dedupe.variables.string
 import pandas as pd
 import dedupe
 from unidecode import unidecode
@@ -256,27 +257,10 @@ def find_duplicates_in_files(
     output_file: str = None, 
     settings_file: str = 'learned_settings',
     config: Dict = None,
-    
 ) -> List[Dict]:
     """
     Find duplicates in one or more CSV or Excel files with configurable parameters
-    
-    Args:
-        file_paths: List of paths to CSV or Excel files
-        output_file: Path to save results (optional)
-        settings_file: Path to save/load learned settings
-        config: Configuration dictionary
-        training_data: Optional dictionary containing training pairs with answers
-                      Format: {
-                          'pairs': [
-                              {
-                                  '0': record1_dict,
-                                  '1': record2_dict,
-                                  'answer': 'y' | 'n' | 'u'
-                              },
-                              ...
-                          ]
-                      }
+    Uses only first 400 rows for training but processes entire file for duplicates
     """
     # Set default configuration
     default_config = {
@@ -286,7 +270,8 @@ def find_duplicates_in_files(
         'fields': [],  # Will be populated from the first file
         'required_matches': 1,  # Default to requiring at least one match
         'max_training_matches': 5,  # Number of positive training examples
-        'max_training_distincts': 5  # Number of negative training examples
+        'max_training_distincts': 5,  # Number of negative training examples
+        'max_training_rows': 400  # Maximum rows to use for training
     }
     
     config = {**default_config, **(config or {})}
@@ -307,30 +292,50 @@ def find_duplicates_in_files(
     if len(all_data) == 0:
         raise ValueError("No data found in input files")
     
+    # Create a sample for training using first max_training_rows
+    training_data_df = all_data.head(config['max_training_rows'])
+    training_data_d = convert_df_to_dedupe_format(training_data_df)
+    
+    # Convert full data to dedupe format (will be used later for finding duplicates)
+    full_data_d = convert_df_to_dedupe_format(all_data)
+    
     # Print data summary
     logger.info("Data Summary:")
+    logger.info(f"Total records: {len(all_data)}")
+    logger.info(f"Records used for training: {len(training_data_df)}")
     for file_path in file_paths:
         file_data = all_data[all_data['source_file'] == os.path.basename(file_path)]
         logger.info(f"- {file_path}: {len(file_data)} records")
     
-    # Convert data to dedupe format
-    data_d = convert_df_to_dedupe_format(all_data)
-    
     # Convert field configurations to dedupe format
     variable_definition = []
     for field_config in config['fields']:
-        from dedupe._typing import VariableDefinition
-        field_def: VariableDefinition = {
-            'field': field_config['field'],
-            'type': field_config['type'],
-            'has_missing': field_config.get('has_missing', False)
-        }
-        variable_definition.append(field_def)
-    
+        field_type = field_config['type']
+        field_name = field_config['field']
+        has_missing = field_config.get('has_missing', False)
+        
+        if field_type == 'String':
+            variable = dedupe.variables.String(field_name, has_missing=has_missing)
+        elif field_type == 'Text':
+            variable = dedupe.variables.Text(field_name, has_missing=has_missing)
+        elif field_type == 'Price':
+            variable = dedupe.variables.Price(field_name, has_missing=has_missing)
+        elif field_type == 'DateTime':
+            variable = dedupe.variables.DateTime(field_name, has_missing=has_missing)
+        elif field_type == 'Exact':
+            variable = dedupe.variables.Exact(field_name, has_missing=has_missing)
+        else:
+            variable = dedupe.variables.String(field_name, has_missing=has_missing)
+            
+        variable_definition.append(variable)
+
     # Initialize deduper
     logger.info("Training dedupe...")
     deduper = dedupe.Dedupe(variable_definition)
-    deduper.prepare_training(data_d)
+    
+    # Use training data subset for prepare_training
+    deduper.prepare_training(training_data_d)
+    
     uncertain_pairs = []
     if training_data is None:
         try:
@@ -349,8 +354,11 @@ def find_duplicates_in_files(
                 '1': pair[1]
             })
 
+        # Get organized pairs using the new matching approach
+        organized_pairs = find_top_matching_pairs(training_pairs, config)
+        
         return {
-            'pairs': training_pairs,
+            'pairs': organized_pairs,
             'status': 'needs_training'
         }
     else:
@@ -366,73 +374,65 @@ def find_duplicates_in_files(
                 formatted_pairs['match'].append(record_pair)
             elif pair['answer'] == 'n':
                 formatted_pairs['distinct'].append(record_pair)
-            # Skip uncertain answers ('u')
         
+        logger.info(f"Training dedupe with {len(formatted_pairs['match'])} match pairs and {len(formatted_pairs['distinct'])} distinct pairs")
         # Train with provided data
         deduper.mark_pairs(formatted_pairs)
         deduper.train()
         
-        # Continue with finding duplicates
-        logger.info("Finding duplicates...")
+        # Now use the trained model on the full dataset
+        logger.info("Finding duplicates in full dataset...")
         threshold = config['similarity_threshold']
-        
         logger.info(f"Using threshold: {threshold}")
-        clustered_dupes = deduper.partition(data_d, threshold)
         
-        # Format results
+        # Process in chunks of 10000
+        chunk_size = 1000
         results = []
         cluster_membership = {}
+        total_clusters = 0
         
-        for cluster_id, (records, scores) in enumerate(clustered_dupes):
-            # Save cluster membership for each record
-            for record_id, score in zip(records, scores):
-                cluster_membership[record_id] = {
-                    "cluster_id": cluster_id,
-                    "confidence_score": score
-                }
+        # Process data in chunks
+        for i in range(0, len(all_data), chunk_size):
+            chunk_end = min(i + chunk_size, len(all_data))
+            logger.info(f"Processing records {i} to {chunk_end} of {len(all_data)}")
             
-            if len(records) > 1:  # Only include actual duplicates
-                cluster_records = []
-                for record_id, score in zip(records, scores):
-                    record = data_d[record_id].copy()
-                    record.update({
-                        'confidence_score': score,
-                        'source_file': all_data.loc[int(record_id), 'source_file'],
-                        'record_id': record_id
-                    })
-                    cluster_records.append(record)
-                
-                # Only add clusters where records are from different files or have exact matches
-                has_duplicates = False
-                for i, rec1 in enumerate(cluster_records):
-                    for rec2 in cluster_records[i+1:]:
-                        # Check if records are from different files
-                        if rec1['source_file'] != rec2['source_file']:
-                            has_duplicates = True
-                            break
+            # Get chunk of data
+            chunk_keys = list(full_data_d.keys())[i:chunk_end]
+            chunk_data = {k: full_data_d[k] for k in chunk_keys}
+            
+            # Find duplicates in this chunk
+            chunk_dupes = deduper.partition(chunk_data, threshold)
+            
+            # Process results from this chunk
+            for records, scores in chunk_dupes:
+                if len(records) > 1:  # Only include actual duplicates
+                    cluster_records = []
+                    
+                    # Save cluster membership for each record
+                    for record_id, score in zip(records, scores):
+                        cluster_membership[record_id] = {
+                            "cluster_id": total_clusters,
+                            "confidence_score": score
+                        }
                         
-                        # Check for exact matches on any match field
-                        for field in config['match_fields']:
-                            if (field in rec1 and field in rec2 and 
-                                rec1[field] and rec2[field] and 
-                                rec1[field] == rec2[field]):
-                                has_duplicates = True
-                                break
-                        
-                        if has_duplicates:
-                            break
-                            
-                    if has_duplicates:
-                        break
-                
-                if has_duplicates:
+                        record = full_data_d[record_id].copy()
+                        record.update({
+                            'confidence_score': score,
+                            'source_file': all_data.loc[int(record_id), 'source_file'],
+                            'record_id': record_id
+                        })
+                        cluster_records.append(record)
+                    
+                    # Add all clusters without additional checks
                     results.append({
-                        'cluster_id': cluster_id,
+                        'cluster_id': total_clusters,
                         'group_size': len(cluster_records),
                         'confidence_score': sum(r['confidence_score'] for r in cluster_records) / len(cluster_records),
                         'records': cluster_records
                     })
-        
+                    total_clusters += 1
+
+        logger.info(f"Found {len(results)} duplicate groups across all chunks")
         results = sorted(results, key=lambda x: x['confidence_score'], reverse=True)
         
         # Save results if output file is specified
@@ -462,6 +462,73 @@ def find_duplicates_in_files(
         
         return results
 
+def find_top_matching_pairs(training_pairs: List[Dict], config: Dict) -> List[Dict]:
+    """
+    Organize training pairs by alternating between matching, random, and distinct pairs
+    
+    Args:
+        training_pairs: List of training pair objects, each containing '0' and '1' records
+        config: Configuration dictionary
+    
+    Returns:
+        List of organized training pairs alternating between matching, random, and distinct
+    """
+    if not training_pairs:
+        return []
+        
+    # Get first two columns from the data
+    sample_record = training_pairs[0]['0']
+    first_two_cols = list(sample_record.keys())[:2]
+    
+    # Categorize pairs based on first two columns
+    matching_pairs = []
+    distinct_pairs = []
+    
+    for pair in training_pairs:
+        match_score = 0
+        for field in first_two_cols:
+            val1 = str(pair['0'].get(field, '')).lower().strip()
+            val2 = str(pair['1'].get(field, '')).lower().strip()
+            if val1 and val2 and val1 == val2:
+                match_score += 1
+        
+        if match_score == len(first_two_cols):  # Both columns match
+            matching_pairs.append(pair)
+        elif match_score == 0:  # No columns match
+            distinct_pairs.append(pair)
+    
+    # Remaining pairs will be used as random pairs
+    random_pairs = [p for p in training_pairs 
+                   if p not in matching_pairs and p not in distinct_pairs]
+    
+    # Organize pairs in the desired pattern: matching, random, distinct
+    organized_pairs = []
+    max_length = max(len(matching_pairs), len(random_pairs), len(distinct_pairs))
+    
+    for i in range(max_length):
+        # Add a matching pair if available
+        if i < len(matching_pairs):
+            organized_pairs.append(matching_pairs[i])
+            
+        # Add a random pair if available
+        if i < len(random_pairs):
+            organized_pairs.append(random_pairs[i])
+            
+        # Add a distinct pair if available
+        if i < len(distinct_pairs):
+            organized_pairs.append(distinct_pairs[i])
+    
+    # Add any remaining pairs to maintain all training data
+    remaining_matches = matching_pairs[max_length:]
+    remaining_random = random_pairs[max_length:]
+    remaining_distinct = distinct_pairs[max_length:]
+    
+    organized_pairs.extend(remaining_matches)
+    organized_pairs.extend(remaining_random)
+    organized_pairs.extend(remaining_distinct)
+    
+    return organized_pairs
+
 if __name__ == "__main__":
     # Example usage with optimized configuration
     # input_files = ['KNA1.xlsx']  # Your input file
@@ -488,29 +555,6 @@ if __name__ == "__main__":
         data = {
             "pairs": [
                 {
-            "0": {
-                "Customer": "210019",
-                "Name 1": "hapis sp zoo",
-                "Name 2": "nan",
-                "Street": "moniuszki 18",
-                "Postal Code": "12-100",
-                "City": "szczytno",
-                "Region": "nan",
-                "Country": "pl",
-            },
-            "1": {
-                "Customer": "210019",
-                "Name 1": "hapis sp zoo",
-                "Name 2": "nan",
-                "Street": "moniuszki 18",
-                "Postal Code": "12-100",
-                "City": "szczytno",
-                "Region": "nan",
-                "Country": "pl",
-            },
-            "answer": "y"
-        },
-               {
             "0": {
                 "Customer": "210019",
                 "Name 1": "hapis sp zoo",

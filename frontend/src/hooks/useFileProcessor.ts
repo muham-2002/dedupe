@@ -21,7 +21,7 @@ export function useFileProcessor() {
       const formData = new FormData()
       formData.append('files', file)
       const queryParams = new URLSearchParams({
-        similarity_threshold: '0.5',
+        similarity_threshold: '0.2',
         training_data: JSON.stringify(trainingData)
       })
       const response = await fetch(
@@ -40,6 +40,7 @@ export function useFileProcessor() {
       if (result.status === 'needs_training') {
         return result.pairs
       } else {
+
         setDuplicates(result.duplicates)
       }
 

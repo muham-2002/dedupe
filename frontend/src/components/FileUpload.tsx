@@ -1,4 +1,5 @@
-import { useState, useCallback } from 'react'
+'use client'
+import { useCallback } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { Card, CardContent } from '@/components/ui/card'
 import { Upload, X } from 'lucide-react'
@@ -8,9 +9,10 @@ interface FileUploadProps {
   onFileUpload: (file: File) => void
   handleClearAll: () => void
   file: File | null
+  isLoading: boolean
 }
 
-export default function FileUpload({ onFileUpload, handleClearAll, file }: FileUploadProps) {
+export default function FileUpload({ onFileUpload, handleClearAll, file, isLoading }: FileUploadProps) {
 
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
@@ -36,15 +38,15 @@ export default function FileUpload({ onFileUpload, handleClearAll, file }: FileU
   }
 
   return (
-    <div className="flex justify-center">
+    <div className="flex justify-center h-full">
       <Card
         {...getRootProps()}
-        className={`w-full cursor-pointer transition-all duration-300 hover:border-primary/50 hover:bg-accent ${
+        className={`w-full cursor-pointer transition-all duration-300 hover:border-primary/50 hover:bg-accent h-full ${
           isDragActive ? 'border-primary border-2 bg-accent' : 'border-dashed'
         }`}
       >
-        <CardContent className="flex flex-col items-center justify-center space-y-4 p-6">
-          <input {...getInputProps()} />
+        <CardContent className="flex flex-col items-center justify-center space-y-4 p-6 h-full">
+          <input {...getInputProps()} disabled={isLoading} />
           <div className="rounded-full bg-primary/10 p-4">
             <Upload className="h-8 w-8 text-primary" />
           </div>
@@ -57,6 +59,7 @@ export default function FileUpload({ onFileUpload, handleClearAll, file }: FileU
               <Button
                 variant="ghost"
                 size="sm"
+                disabled={isLoading}
                 className="text-red-500 hover:bg-red-100 hover:text-red-600"
                 onClick={(e) => {
                   handleClearAll()

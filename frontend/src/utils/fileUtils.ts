@@ -18,8 +18,8 @@ export async function processExcelFile(file: File): Promise<any[]> {
 
 export async function createDeduplicatedFile(file: File, rowsToRemove: number[]): Promise<Blob> {
   const data = await processExcelFile(file)
-  const deduplicatedData = data.filter((_, index) => !rowsToRemove.includes(index))
-
+  const deduplicatedData = data.filter((_, index) => !rowsToRemove.includes((index)))
+  
   // Handle CSV files
   if (file.name.toLowerCase().endsWith('.csv')) {
     const headers = Object.keys(deduplicatedData[0]).join(',')
