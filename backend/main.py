@@ -22,7 +22,8 @@ class NumpyEncoder(json.JSONEncoder):
 app = FastAPI(
     title="Deduplication API",
     description="API for finding duplicates in CSV and Excel files",
-    version="1.0.0"
+    version="1.0.0",
+    docs_url="/docs"
 )
 
 # Add CORS middleware
@@ -132,6 +133,10 @@ async def shutdown_event():
     """Clean up temporary directory on shutdown"""
     if os.path.exists(TEMP_DIR):
         shutil.rmtree(TEMP_DIR)
+
+@app.get("/")
+async def root():
+    return {"message": "API is running"}
 
 if __name__ == "__main__":
     import uvicorn
