@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -41,47 +40,35 @@ export default function DuplicateGroup({ group, onSelectRow, columnWidths, selec
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead style={{ width: '100px', minWidth: '100px' }}>Action</TableHead>
                 {Object.keys(group.records[0])
                   .filter(key => !['confidence_score', 'source_file'].includes(key))
                   .map((key) => (
-                    <TableHead 
-                      key={key} 
+                    <TableHead
+                      key={key}
                       className="whitespace-nowrap font-bold"
                       style={{ width: `${columnWidths[key] * 8}px`, minWidth: `${columnWidths[key] * 8}px` }}
                     >
                       {key}
                     </TableHead>
-                ))}
-                <TableHead style={{ width: '100px', minWidth: '100px' }}>Action</TableHead>
+                  ))}
               </TableRow>
             </TableHeader>
             <TableBody>
               {group.records.map((record, index) => (
-                <TableRow 
-                  key={index} 
+                <TableRow
+                  key={index}
                   className={selectedRows.includes(index) ? 'bg-red-50' : ''}
                 >
-                  {Object.entries(record)
-                    .filter(([key]) => !['confidence_score', 'source_file'].includes(key))
-                    .map(([key, value], valueIndex) => (
-                      <TableCell 
-                        key={valueIndex} 
-                        className="whitespace-nowrap"
-                        style={{ width: `${columnWidths[key] * 8}px`, minWidth: `${columnWidths[key] * 8}px` }}
-                      >
-                        {String(value)}
-                      </TableCell>
-                  ))}
                   <TableCell style={{ width: '100px', minWidth: '100px' }}>
                     <Button
                       onClick={() => handleSelectRow(index, record)}
-                      variant={selectedRows.includes(index) ? 'default' : 'outline'} 
+                      variant={selectedRows.includes(index) ? 'default' : 'outline'}
                       size="sm"
-                      className={`w-24 ${
-                        selectedRows.includes(index)
-                          ? 'bg-green-500 hover:bg-green-600 text-white' 
-                          : 'text-red-500 hover:bg-red-50 border-red-500'
-                      }`}
+                      className={`w-24 ${selectedRows.includes(index)
+                        ? 'bg-green-500 hover:bg-green-600 text-white'
+                        : 'text-red-500 hover:bg-red-50 border-red-500'
+                        }`}
                     >
                       {selectedRows.includes(index) ? (
                         <>
@@ -94,6 +81,18 @@ export default function DuplicateGroup({ group, onSelectRow, columnWidths, selec
                       )}
                     </Button>
                   </TableCell>
+                  {Object.entries(record)
+                    .filter(([key]) => !['confidence_score', 'source_file'].includes(key))
+                    .map(([key, value], valueIndex) => (
+                      <TableCell
+                        key={valueIndex}
+                        className="whitespace-nowrap"
+                        style={{ width: `${columnWidths[key] * 8}px`, minWidth: `${columnWidths[key] * 8}px` }}
+                      >
+                        {String(value)}
+                      </TableCell>
+                    ))}
+
                 </TableRow>
               ))}
             </TableBody>
