@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { processExcelFile, createDeduplicatedFile } from '@/utils/fileUtils'
 import { GroupType } from '@/types'
 import toast from 'react-hot-toast'
+import axios from 'axios'
 
 export function useFileProcessor() {
   const [duplicates, setDuplicates] = useState<GroupType[]>([])
@@ -25,20 +26,24 @@ export function useFileProcessor() {
       formData.append('training_data', JSON.stringify(trainingData))
       console.log("trainingData: ", trainingData)
 
-      const response = await fetch(
-        `${BASE_URL}/dedupe`,
-        {
-          method: 'POST',
-          body: formData,
-        }
-      )
+      const response = await axios.post(`${BASE_URL}/dedupe`, formData, {
+        timeout: 60 * 60 * 2000, // 2 hour timeout
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+        responseType: 'json',
+        maxRedirects: 0
+      });
+      
       console.log("response: ", response)
 
-      if (!response.ok) {
+      if (response.status !== 200) {
         throw new Error('Failed to process file')
       }
 
-      const result = await response.json()
+      const result = response.data
       if (result.status === 'needs_training') {
         return result.pairs
       } else {
