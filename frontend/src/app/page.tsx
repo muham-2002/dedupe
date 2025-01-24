@@ -12,6 +12,8 @@ import { AlertCircle, CheckCircle2 } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import dynamic from 'next/dynamic'
 import FilePreview from '@/components/FilePreview'
+import toast from 'react-hot-toast';
+
 
 const Confetti = dynamic(() => import('@/components/Confetti'), { ssr: false })
 
@@ -54,7 +56,7 @@ export default function Home() {
       setApiCalled(true)
       setSelectedRecords({})
       setShowConfetti(false)
-      const pairs = await processFile(file, null)
+      const pairs = await processFile(file, null, setTrainingData)
       console.log(pairs)
       setTrainingData(pairs)
     }
@@ -151,8 +153,7 @@ export default function Home() {
       setApiCalled(true)
       setSelectedRecords({})
       setShowConfetti(false)
-      await processFile(file, trainingPairs)
-      setTrainingData(null)
+      await processFile(file, trainingPairs, setTrainingData)
       setIsFinishLoading(false)
     }
   }
@@ -164,7 +165,7 @@ export default function Home() {
     console.log(recordsToRemove)
     // Show warning if no duplicates are selected for removal
     if (recordsToRemove.length === 0) {
-      alert("No duplicates selected for removal. The downloaded file will be identical to the original.");
+      toast.error("No duplicates selected for removal. The downloaded file will be identical to the original.");
       return;
     }
 
@@ -301,7 +302,7 @@ export default function Home() {
           <p className="text-muted-foreground">Upload your file and let us handle the duplicates for you</p>
         </div>
 
-        {!trainingData && (<div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        {!trainingData && !duplicates.length && (<div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
           <div className="space-y-4">
             <Card className="border-none shadow-md h-full">
               <CardHeader className="pb-4">
@@ -394,7 +395,7 @@ export default function Home() {
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
-                <h2 className="text-2xl font-semibold bg-gradient-to-r from-primary to-primary/80 bg-clip-text text-transparent">
+                <h2 className="text-2xl font-semibold bg-gradient-to-r from-primary to-primary/80 bg-clip-text">
                   Duplicate Groups Found
                 </h2>
                 <Button

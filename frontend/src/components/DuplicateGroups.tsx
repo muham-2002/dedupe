@@ -79,16 +79,18 @@ export default function DuplicateGroup({ group, onSelectRow, columnWidths, selec
                       size="sm"
                       className={`w-24 ${
                         selectedRows.includes(index)
-                          ? 'bg-red-500 hover:bg-red-600 text-white' 
-                          : 'bg-white hover:bg-gray-100'
+                          ? 'bg-green-500 hover:bg-green-600 text-white' 
+                          : 'text-red-500 hover:bg-red-50 border-red-500'
                       }`}
                     >
                       {selectedRows.includes(index) ? (
                         <>
-                          <X className="mr-1 h-4 w-4" /> Removed
+                          <CheckCircle2 className="mr-1 h-4 w-4" /> Keep
                         </>
                       ) : (
-                        'Remove'
+                        <>
+                          <X className="mr-1 h-4 w-4" /> Remove
+                        </>
                       )}
                     </Button>
                   </TableCell>

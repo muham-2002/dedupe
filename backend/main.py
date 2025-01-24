@@ -1,4 +1,5 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from asyncio.log import logger
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import shutil
@@ -8,6 +9,7 @@ import tempfile
 from dedupe_script import find_duplicates_in_files
 import numpy as np
 import json
+from contextlib import asynccontextmanager
 
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -19,11 +21,19 @@ class NumpyEncoder(json.JSONEncoder):
             return obj.tolist()
         return super().default(obj)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    # Cleanup on shutdown
+    if os.path.exists(TEMP_DIR):
+        shutil.rmtree(TEMP_DIR)
+
 app = FastAPI(
     title="Deduplication API",
     description="API for finding duplicates in CSV and Excel files",
     version="1.0.0",
-    docs_url="/docs"
+    docs_url="/docs",
+    lifespan=lifespan
 )
 
 # Add CORS middleware
@@ -38,25 +48,27 @@ app.add_middleware(
 # Create a temporary directory to store uploaded files
 TEMP_DIR = tempfile.mkdtemp()
 
-@app.post("/dedupe/", response_class=JSONResponse)
+@app.post("/dedupe", response_class=JSONResponse)
 async def dedupe_files(
     files: List[UploadFile] = File(...),
-    similarity_threshold: float = 0.6,
-    training_data: Any = None
+    similarity_threshold: float = Form(0.6),
+    training_data: str = Form(None)
 ):
-    training_data = json.loads(training_data)
-    print(training_data)
     """
     Upload one or more CSV/Excel files and find duplicates.
     
     Args:
         files: List of files to process (CSV or Excel)
         similarity_threshold: Threshold for duplicate matching (0-1)
-        required_matches: Minimum number of fields that must match
-        max_training_matches: Maximum number of training matches
-        max_training_distincts: Maximum number of training distinct pairs
+        training_data: Training data as JSON string
     """
     try:
+        if training_data:
+            print(f"Received training data: {training_data[:100]}...")  # Print first 100 chars for debugging
+            logger.info(f"Received training data length: {len(training_data)}")
+            training_data = json.loads(training_data)
+        else:
+            logger.info("No training data found")
         required_matches: int = 1
         max_training_matches: int = 5
         max_training_distincts: int = 5
@@ -127,12 +139,6 @@ async def dedupe_files(
             status_code=500,
             detail=str(e)
         )
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Clean up temporary directory on shutdown"""
-    if os.path.exists(TEMP_DIR):
-        shutil.rmtree(TEMP_DIR)
 
 @app.get("/")
 async def root():
