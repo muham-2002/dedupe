@@ -37,91 +37,6 @@ def convert_df_to_dedupe_format(df: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
         data_d[str(idx)] = clean_row
     return data_d
 
-def get_training_pairs(data_d: Dict[str, Dict[str, Any]], config: Dict) -> Dict[str, List[Dict[str, Dict[str, Any]]]]:
-    """
-    Generate training pairs from the data using exact matches for training
-    """
-    training_pairs = {
-        'match': [],
-        'distinct': []
-    }
-    
-    records = list(data_d.items())
-    matches_found = 0
-    distinct_found = 0
-    
-    # Get fields for matching
-    match_fields = config.get('match_fields', ['email', 'phone'])  # Default to email and phone
-    
-    # Create an index for exact matches
-    exact_matches = {}
-    for record_id, record in records:
-        # Create a composite key from match fields
-        key_parts = []
-        for field in match_fields:
-            if field in record and record[field]:
-                key_parts.append(str(record[field]).lower().strip())
-        
-        if key_parts:  # Only if we have values for match fields
-            key = '|'.join(key_parts)
-            if key not in exact_matches:
-                exact_matches[key] = []
-            exact_matches[key].append((record_id, record))
-    
-    # Find exact matches
-    for key, matching_records in exact_matches.items():
-        if len(matching_records) > 1:  # We found duplicates
-            # Take pairs of records that match exactly
-            for i, (record1_id, record1) in enumerate(matching_records):
-                for record2_id, record2 in matching_records[i+1:]:
-                    if matches_found >= config.get('max_training_matches', 5):
-                        break
-                    
-                    training_pairs['match'].append({
-                        '0': record1,
-                        '1': record2
-                    })
-                    matches_found += 1
-                
-                if matches_found >= config.get('max_training_matches', 5):
-                    break
-    
-    # Find distinct pairs (records that don't match on any field)
-    processed_pairs = set()
-    for i, (record1_id, record1) in enumerate(records):
-        if distinct_found >= config.get('max_training_distincts', 5):
-            break
-            
-        for record2_id, record2 in records[i+1:]:
-            if distinct_found >= config.get('max_training_distincts', 5):
-                break
-                
-            # Skip if we've seen this pair
-            pair_key = tuple(sorted([record1_id, record2_id]))
-            if pair_key in processed_pairs:
-                continue
-            
-            processed_pairs.add(pair_key)
-            
-            # Check if they're different on all match fields
-            is_distinct = True
-            for field in match_fields:
-                val1 = str(record1.get(field, '')).lower().strip()
-                val2 = str(record2.get(field, '')).lower().strip()
-                if val1 and val2 and val1 == val2:
-                    is_distinct = False
-                    break
-            
-            if is_distinct:
-                training_pairs['distinct'].append({
-                    '0': record1,
-                    '1': record2
-                })
-                distinct_found += 1
-    
-    logger.info(f"Generated {len(training_pairs['match'])} matching pairs and {len(training_pairs['distinct'])} distinct pairs")
-    return training_pairs
-
 def read_excel_file(file_path: str, chunk_size: int) -> pd.DataFrame:
     """
     Read Excel file in chunks to handle large files
@@ -468,7 +383,7 @@ def find_top_matching_pairs(training_pairs: List[Dict], config: Dict) -> List[Di
     
     Args:
         training_pairs: List of training pair objects, each containing '0' and '1' records
-        config: Configuration dictionary
+        config: Configuration dictionary with selected_columns list
     
     Returns:
         List of organized training pairs alternating between matching, random, and distinct
@@ -476,23 +391,23 @@ def find_top_matching_pairs(training_pairs: List[Dict], config: Dict) -> List[Di
     if not training_pairs:
         return []
         
-    # Get first two columns from the data
+    # Get columns to match from config, fallback to first two if not specified
     sample_record = training_pairs[0]['0']
-    first_two_cols = list(sample_record.keys())[:2]
+    match_columns = config.get('selected_columns', list(sample_record.keys())[:2])
     
-    # Categorize pairs based on first two columns
+    # Categorize pairs based on selected columns
     matching_pairs = []
     distinct_pairs = []
     
     for pair in training_pairs:
         match_score = 0
-        for field in first_two_cols:
+        for field in match_columns:
             val1 = str(pair['0'].get(field, '')).lower().strip()
             val2 = str(pair['1'].get(field, '')).lower().strip()
             if val1 and val2 and val1 == val2:
                 match_score += 1
         
-        if match_score == len(first_two_cols):  # Both columns match
+        if match_score == len(match_columns):  # All selected columns match
             matching_pairs.append(pair)
         elif match_score == 0:  # No columns match
             distinct_pairs.append(pair)

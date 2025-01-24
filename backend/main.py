@@ -52,7 +52,8 @@ TEMP_DIR = tempfile.mkdtemp()
 async def dedupe_files(
     files: List[UploadFile] = File(...),
     similarity_threshold: float = Form(0.6),
-    training_data: str = Form(None)
+    training_data: str = Form(None),
+    selected_columns: str = Form(None)
 ):
     """
     Upload one or more CSV/Excel files and find duplicates.
@@ -63,6 +64,12 @@ async def dedupe_files(
         training_data: Training data as JSON string
     """
     try:
+        if selected_columns:
+            print(f"Received selected columns: {selected_columns[:100]}...")  # Print first 100 chars for debugging
+            logger.info(f"Received selected columns length: {len(selected_columns)}")
+            selected_columns = json.loads(selected_columns)
+        else:
+            logger.info("No selected columns found")
         if training_data:
             print(f"Received training data: {training_data[:100]}...")  # Print first 100 chars for debugging
             logger.info(f"Received training data length: {len(training_data)}")
@@ -97,7 +104,8 @@ async def dedupe_files(
             'max_training_distincts': max_training_distincts,
             'max_training_pairs': 100,
             'recall_weight': 1.0,
-            'fields': []
+            'fields': [],
+            'selected_columns': selected_columns if selected_columns is not None and len(selected_columns) > 0 else None
         }
 
         # Run deduplication

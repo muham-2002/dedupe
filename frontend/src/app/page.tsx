@@ -7,12 +7,12 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/componen
 import { useFileProcessor } from '@/hooks/useFileProcessor'
 import FileUpload from '@/components/FileUpload'
 import DuplicateGroup from '@/components/DuplicateGroups'
-import { Skeleton } from '@/components/ui/skeleton'
 import { AlertCircle, CheckCircle2 } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import dynamic from 'next/dynamic'
 import FilePreview from '@/components/FilePreview'
 import toast from 'react-hot-toast';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 
 const Confetti = dynamic(() => import('@/components/Confetti'), { ssr: false })
@@ -27,6 +27,8 @@ export default function Home() {
   const [currentPairIndex, setCurrentPairIndex] = useState<number>(0)
   const [userResponses, setUserResponses] = useState<Record<number, 'y' | 'n' | 'u'>>({})
   const [isFinishLoading, setIsFinishLoading] = useState(false)
+  const [selectedColumns, setSelectedColumns] = useState<string[]>([])
+  const [availableColumns, setAvailableColumns] = useState<string[]>([])
 
   const handleClearAll = () => {
     setSelectedRecords({})
@@ -40,14 +42,15 @@ export default function Home() {
     resetAll()
   }
 
-  const handleFileUpload = (uploadedFile: File) => {
+  const handleFileUpload = async (uploadedFile: File) => {
     setFile(uploadedFile)
     setSelectedRecords({})
     setShowConfetti(false)
+    setSelectedColumns([])
   }
 
   const handleRemoveDuplicates = async () => {
-    if (file) {
+    if (file && selectedColumns.length >= 2) {
       setTrainingData(null)
       setCurrentPairIndex(0)
       setUserResponses({})
@@ -56,9 +59,11 @@ export default function Home() {
       setApiCalled(true)
       setSelectedRecords({})
       setShowConfetti(false)
-      const pairs = await processFile(file, null, setTrainingData)
+      const pairs = await processFile(file, null, setTrainingData, selectedColumns)
       console.log(pairs)
       setTrainingData(pairs)
+    } else {
+      toast.error("Please select at least two columns for matching")
     }
   }
 
@@ -294,6 +299,76 @@ export default function Home() {
     )
   }
 
+  const renderColumnSelection = () => {
+    if (!file) return null;
+
+    const handleAddColumn = (value: string) => {
+      if (value && !selectedColumns.includes(value)) {
+        setSelectedColumns([...selectedColumns, value]);
+      }
+    };
+
+    const handleRemoveColumn = (columnToRemove: string) => {
+      setSelectedColumns(selectedColumns.filter(col => col !== columnToRemove));
+    };
+
+    return (
+      <Card className="mb-8">
+        <CardHeader>
+          <CardTitle>Select Matching Columns</CardTitle>
+          <p className="text-sm text-muted-foreground mt-2">
+            Select columns that are important for matching. Choose columns that:
+          </p>
+          <ul className="text-sm text-muted-foreground list-disc list-inside mt-1">
+            <li>Don't contain null or empty values</li>
+            <li>Have consistent formatting</li>
+            <li>Are likely to be similar for duplicate records</li>
+          </ul>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            {selectedColumns.map((column, index) => (
+              <div 
+                key={column} 
+                className="flex items-center gap-2 bg-secondary rounded-md px-3 py-1"
+              >
+                <span className="text-sm">{column}</span>
+                <button
+                  onClick={() => handleRemoveColumn(column)}
+                  className="text-muted-foreground hover:text-destructive"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <Select onValueChange={handleAddColumn}>
+              <SelectTrigger className="w-[200px]">
+                <SelectValue placeholder="Add column" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableColumns
+                  .filter(col => !selectedColumns.includes(col))
+                  .map(col => (
+                    <SelectItem key={col} value={col}>
+                      {col}
+                    </SelectItem>
+                  ))
+                }
+              </SelectContent>
+            </Select>
+          </div>
+          {selectedColumns.length < 2 && (
+            <p className="text-sm text-destructive">
+              Please select at least 2 columns for matching
+            </p>
+          )}
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-gradient-to-br from-background via-muted to-background">
       <div className="container mx-auto py-8 px-4">
@@ -310,7 +385,8 @@ export default function Home() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <FileUpload onFileUpload={handleFileUpload} handleClearAll={handleClearAll} file={file} isLoading={isLoading} />
-                {file && (
+                {file && renderColumnSelection()}
+                {file && selectedColumns.length >= 2 && (
                   <div className="flex gap-2">
                     <Button
                       onClick={handleRemoveDuplicates}
@@ -348,7 +424,7 @@ export default function Home() {
             </Card>
           </div>
 
-          <FilePreview file={file} />
+          <FilePreview file={file} setAvailableColumns={setAvailableColumns}/>
         </div>
         )}
 
@@ -372,14 +448,6 @@ export default function Home() {
             <AlertTitle>Error</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
           </Alert>
-        )}
-
-        {isLoading && (
-          <div className="space-y-4">
-            {[...Array(3)].map((_, i) => (
-              <Skeleton key={i} className="h-[200px] w-full rounded-lg animate-pulse" />
-            ))}
-          </div>
         )}
 
         {duplicates.length === 0 && !isLoading && file && apiCalled && !trainingData && (

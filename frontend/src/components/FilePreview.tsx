@@ -14,9 +14,10 @@ interface ParseResult {
 
 interface FilePreviewProps {
   file: File | null
+  setAvailableColumns: (columns: string[]) => void
 }
 
-export default function FilePreview({ file }: FilePreviewProps) {
+export default function FilePreview({ file, setAvailableColumns }: FilePreviewProps) {
   const [previewData, setPreviewData] = useState<{ headers: string[]; rows: any[] } | null>(null)
   const [totalRows, setTotalRows] = useState<number>(0)
   const [loading, setLoading] = useState(false)
@@ -44,7 +45,7 @@ export default function FilePreview({ file }: FilePreviewProps) {
                 const firstRow = results.data[0] as Record<string, unknown>;
                 setPreviewData({
                   headers: Object.keys(firstRow),
-                  rows: results.data.slice(0, 6)
+                  rows: results.data.slice(0, 10)
                 })
                 setTotalRows(results.data.length)
               }
@@ -60,7 +61,7 @@ export default function FilePreview({ file }: FilePreviewProps) {
 
           if (data && data.length > 0) {
             const headers = data[0] as string[]
-            const rows = data.slice(1, 7).map(row => {
+            const rows = data.slice(1, 11).map(row => {
               const rowData: Record<string, any> = {}
               headers.forEach((header, index) => {
                 rowData[header] = (row as any[])[index]
@@ -69,6 +70,7 @@ export default function FilePreview({ file }: FilePreviewProps) {
             })
 
             setPreviewData({ headers, rows })
+            setAvailableColumns(headers)
             setTotalRows(data.length - 1) // Subtract 1 to exclude header row
           }
         } else {
@@ -78,6 +80,7 @@ export default function FilePreview({ file }: FilePreviewProps) {
         console.error('Error reading file:', error)
         setError(error instanceof Error ? error.message : 'Error reading file')
         setPreviewData(null)
+        setAvailableColumns([])
         setTotalRows(0)
       } finally {
         setLoading(false)

@@ -12,7 +12,7 @@ export function useFileProcessor() {
   const [error, setError] = useState<string | null>(null)
   const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000'
 
-  const processFile = async (file: File, trainingData: any, setTrainingData: any) => {
+  const processFile = async (file: File, trainingData: any, setTrainingData: any, selectedColumns?: string[]) => {
     try {
       setIsLoading(true)
       setError(null)
@@ -24,7 +24,9 @@ export function useFileProcessor() {
       formData.append('files', file)
       formData.append('similarity_threshold', '0.2')
       formData.append('training_data', JSON.stringify(trainingData))
+      selectedColumns != undefined ? formData.append('selected_columns', JSON.stringify(selectedColumns)) : null
       console.log("trainingData: ", trainingData)
+      console.log("selectedColumns: ", selectedColumns)
 
       const response = await axios.post(`${BASE_URL}/dedupe`, formData, {
         timeout: 60 * 60 * 2000, // 2 hour timeout
