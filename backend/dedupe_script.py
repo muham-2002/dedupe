@@ -18,13 +18,17 @@ logger = logging.getLogger(__name__)
 def preprocess(column):
     """Clean data using Unidecode and Regex"""
     if not column:
-        return None
+        return "N/A"
     
     column = unidecode(str(column))
+    # Replace 'nan' with 'N/A'
+    if column.lower() == 'nan':
+        return "N/A"
+        
     column = re.sub('  +', ' ', column)
     column = re.sub('\n', ' ', column)
     column = column.strip().strip('"').strip("'").lower().strip()
-    return None if not column else column
+    return "N/A" if not column else column
 
 def convert_df_to_dedupe_format(df: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
     """Convert DataFrame to dictionary format required by dedupe"""

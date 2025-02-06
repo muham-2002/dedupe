@@ -66,13 +66,13 @@ export default function DuplicateGroup({ group, onSelectRow, columnWidths, selec
                       variant={selectedRows.includes(index) ? 'default' : 'outline'}
                       size="sm"
                       className={`w-24 ${selectedRows.includes(index)
-                        ? 'bg-green-500 hover:bg-green-600 text-white'
+                        ? 'bg-red-500 hover:bg-red-600 text-white'
                         : 'text-red-500 hover:bg-red-50 border-red-500'
                         }`}
                     >
                       {selectedRows.includes(index) ? (
                         <>
-                          <CheckCircle2 className="mr-1 h-4 w-4" /> Keep
+                          <X className="mr-1 h-4 w-4" /> Removed
                         </>
                       ) : (
                         <>

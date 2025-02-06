@@ -14,10 +14,11 @@ interface ParseResult {
 
 interface FilePreviewProps {
   file: File | null
-  setAvailableColumns: (columns: string[]) => void
+  hidden: boolean
+  setAvailableColumns?: (columns: string[]) => void
 }
 
-export default function FilePreview({ file, setAvailableColumns }: FilePreviewProps) {
+export default function FilePreview({ file, hidden, setAvailableColumns }: FilePreviewProps) {
   const [previewData, setPreviewData] = useState<{ headers: string[]; rows: any[] } | null>(null)
   const [totalRows, setTotalRows] = useState<number>(0)
   const [loading, setLoading] = useState(false)
@@ -43,11 +44,26 @@ export default function FilePreview({ file, setAvailableColumns }: FilePreviewPr
             complete: (results: ParseResult) => {
               if (results.data && results.data.length > 0) {
                 const firstRow = results.data[0] as Record<string, unknown>;
+                const headers = Object.keys(firstRow);
+                
+                let previewRows;
+                if (results.data.length > 13) {
+                  // Get first 6 and last 6 rows
+                  const firstRows = results.data.slice(0, 6);
+                  const lastRows = results.data.slice(-6);
+                  previewRows = [...firstRows, { isEllipsis: true }, ...lastRows];
+                } else {
+                  previewRows = results.data;
+                }
+
                 setPreviewData({
-                  headers: Object.keys(firstRow),
-                  rows: results.data.slice(0, 10)
+                  headers: headers,
+                  rows: previewRows
                 })
                 setTotalRows(results.data.length)
+                if (setAvailableColumns) {
+                  setAvailableColumns(headers)
+                }
               }
             }
           })
@@ -61,17 +77,47 @@ export default function FilePreview({ file, setAvailableColumns }: FilePreviewPr
 
           if (data && data.length > 0) {
             const headers = data[0] as string[]
-            const rows = data.slice(1, 11).map(row => {
-              const rowData: Record<string, any> = {}
-              headers.forEach((header, index) => {
-                rowData[header] = (row as any[])[index]
-              })
-              return rowData
-            })
+            const dataRows = data.slice(1) // Remove header row
+            
+            let previewRows;
+            if (dataRows.length > 13) {
+              // Get first 6 and last 6 rows
+              const firstRows = dataRows.slice(0, 6);
+              const lastRows = dataRows.slice(-6);
+              
+              // Map rows to objects
+              const mappedFirstRows = firstRows.map(row => {
+                const rowData: Record<string, any> = {}
+                headers.forEach((header, index) => {
+                  rowData[header] = (row as any[])[index]
+                })
+                return rowData
+              });
+              
+              const mappedLastRows = lastRows.map(row => {
+                const rowData: Record<string, any> = {}
+                headers.forEach((header, index) => {
+                  rowData[header] = (row as any[])[index]
+                })
+                return rowData
+              });
 
-            setPreviewData({ headers, rows })
-            setAvailableColumns(headers)
-            setTotalRows(data.length - 1) // Subtract 1 to exclude header row
+              previewRows = [...mappedFirstRows, { isEllipsis: true }, ...mappedLastRows];
+            } else {
+              previewRows = dataRows.map(row => {
+                const rowData: Record<string, any> = {}
+                headers.forEach((header, index) => {
+                  rowData[header] = (row as any[])[index]
+                })
+                return rowData
+              });
+            }
+
+            setPreviewData({ headers, rows: previewRows })
+            setTotalRows(dataRows.length)
+            if (setAvailableColumns) {
+              setAvailableColumns(headers)
+            }
           }
         } else {
           throw new Error('Unsupported file format. Please upload a CSV or Excel file.')
@@ -80,7 +126,6 @@ export default function FilePreview({ file, setAvailableColumns }: FilePreviewPr
         console.error('Error reading file:', error)
         setError(error instanceof Error ? error.message : 'Error reading file')
         setPreviewData(null)
-        setAvailableColumns([])
         setTotalRows(0)
       } finally {
         setLoading(false)
@@ -91,7 +136,7 @@ export default function FilePreview({ file, setAvailableColumns }: FilePreviewPr
   }, [file])
 
   return (
-    <Card className="border-none shadow-md">
+    <Card className={`border-none shadow-md ${hidden ? "hidden" : ""}`}>
       <CardHeader className="pb-4">
         <CardTitle className="text-xl font-semibold flex items-center gap-2">
           Preview
