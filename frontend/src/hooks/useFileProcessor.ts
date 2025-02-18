@@ -3,11 +3,31 @@ import { processExcelFile, createDeduplicatedFile } from '@/utils/fileUtils'
 import { GroupType } from '@/types'
 import toast from 'react-hot-toast'
 import axios from 'axios'
+import Papa from 'papaparse'
+import * as XLSX from 'xlsx'
+
+type RecordType = {
+  Customer: string;
+  "Name 1": string;
+  "Name 2": string;
+  Street: string;
+  "Postal Code": string;
+  City: string;
+  Region: string;
+  Country: string;
+  record_id: string;
+  confidence_score?: number;
+  source_file?: string;
+  cluster_id?: string;
+  excel_row?: number;
+  [key: string]: string | number | undefined;
+}
 
 export function useFileProcessor() {
   const [duplicates, setDuplicates] = useState<GroupType[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [originalFile, setOriginalFile] = useState<File | null>(null)
+  const [originalFileData, setOriginalFileData] = useState<RecordType[]>([])
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000'
@@ -28,8 +48,12 @@ export function useFileProcessor() {
       console.log("trainingData: ", trainingData)
       console.log("selectedColumns: ", selectedColumns)
 
+      if (originalFile) {
+        await readAndStoreOriginalFile(originalFile)
+      }
+
       const response = await axios.post(`${BASE_URL}/dedupe`, formData, {
-        timeout: 60 * 60 * 2000, // 2 hour timeout
+        timeout: 60 * 60 * 2000,
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -71,47 +95,103 @@ export function useFileProcessor() {
     }
   }
 
+  const readAndStoreOriginalFile = async (file: File) => {
+    return new Promise((resolve, reject) => {
+      if (file.name.endsWith('.csv')) {
+        Papa.parse(file, {
+          header: true,
+          complete: (results) => {
+            // Add row numbers as record_id (accounting for header and 1-based indexing)
+            const dataWithIds = results.data.map((row: any) => Object.assign({}, row, {
+              record_id: results.data.indexOf(row).toString()
+            })) as RecordType[]
+            setOriginalFileData(dataWithIds)
+            resolve(dataWithIds)
+          },
+          error: reject
+        })
+      } else if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+        const reader = new FileReader()
+        reader.onload = (e) => {
+          try {
+            const data = new Uint8Array(e.target?.result as ArrayBuffer)
+            const workbook = XLSX.read(data, { type: 'array' })
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
+            const jsonData = XLSX.utils.sheet_to_json(firstSheet)
+            // Add row numbers as record_id (accounting for header and 1-based indexing)
+            const dataWithIds = jsonData.map((row: any) => Object.assign({}, row, {
+              record_id: jsonData.indexOf(row).toString()
+            })) as RecordType[]
+            setOriginalFileData(dataWithIds)
+            resolve(dataWithIds)
+          } catch (error) {
+            reject(error)
+          }
+        }
+        reader.onerror = reject
+        reader.readAsArrayBuffer(file)
+      }
+    })
+  }
+
   const resetAll = () => {
     setDuplicates([])
     setOriginalFile(null)
+    setOriginalFileData([])
     setProgress(0)
     setError(null)
   }
 
-  const downloadFile = (recordsToRemove: number[]) => {
+  const downloadFile = async (recordsToRemove: number[]) => {
     try {
-      // Create a map of record_id to cluster_id
+      // Create maps for cluster_id, confidence_score, and source_file
       const clusterMap = new Map();
+      const confidenceMap = new Map();
+      const sourceFileMap = new Map();
+      
       duplicates.forEach(group => {
         group.records.forEach(record => {
           clusterMap.set(record.record_id, group.cluster_id);
+          confidenceMap.set(record.record_id, record.confidence_score);
+          sourceFileMap.set(record.record_id, record.source_file);
         });
       });
 
-      // Get all records and add cluster_id
-      const allRecords = duplicates.flatMap(group => 
-        group.records.map(record => ({
+      // Start with original file data and filter out records to remove
+      const processedRecords = originalFileData
+        .filter(record => !recordsToRemove.includes(+record.record_id))
+        .map(record => ({
           ...record,
-          cluster_id: clusterMap.get(record.record_id) + 1 || '-'
-        }))
-      );
+          // Add cluster_id, confidence_score, and source_file if the record was in a duplicate group
+          cluster_id: clusterMap.has(record.record_id) ? (clusterMap.get(record.record_id) + 1).toString() : '',
+          confidence_score: confidenceMap.has(record.record_id) ? confidenceMap.get(record.record_id) : '',
+          source_file: sourceFileMap.has(record.record_id) ? sourceFileMap.get(record.record_id) : originalFile?.name || ''
+        }));
 
-      // Filter out records that should be removed
-      const filteredRecords = allRecords.filter(
-        record => !recordsToRemove.includes(+record.record_id)
-      );
+      // Get all headers from the processed records except the special columns
+      const specialColumns = ['cluster_id', 'confidence_score', 'source_file'];
+      
+      const regularHeaders = Array.from(
+        new Set(
+          processedRecords.flatMap(record => Object.keys(record))
+        )
+      ).filter(header => !specialColumns.includes(header)).sort();
 
-      // Convert records to CSV
-      const headers = Object.keys(filteredRecords[0]);
+      // Combine headers with special columns at the end
+      const allHeaders = [...regularHeaders, ...specialColumns];
+
+      // Convert records to CSV with consistent columns
       const csvContent = [
-        headers.join(','),
-        ...filteredRecords.map(record => 
-          headers.map(header => {
-            const value = record[header];
-            // Handle values that might contain commas
-            return typeof value === 'string' && value.includes(',') 
-              ? `"${value}"`
-              : value;
+        allHeaders.join(','),
+        ...processedRecords.map(record => 
+          allHeaders.map(header => {
+            const value = (record as any)[header] ?? ''; // Use type assertion for dynamic access
+            // Handle values that might contain commas, newlines, or quotes
+            if (typeof value === 'string' && (value.includes(',') || value.includes('\n') || value.includes('"'))) {
+              // Escape quotes and wrap in quotes
+              return `"${value.replace(/"/g, '""')}"`;
+            }
+            return value;
           }).join(',')
         )
       ].join('\n');
@@ -125,6 +205,7 @@ export function useFileProcessor() {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      URL.revokeObjectURL(url); // Clean up the URL object
     } catch (error) {
       console.error('Error downloading file:', error);
       toast.error('Error downloading file');

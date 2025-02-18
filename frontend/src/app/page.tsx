@@ -438,7 +438,7 @@ export default function Home() {
                         >
                           {currentPair[index][key] ? (
                             currentPair[index][key] === "nan" ? (
-                              "N/A"
+                              ""
                             ) : (
                               (currentPair[index][key] as string)
                             )

@@ -10,6 +10,7 @@ from dedupe_script import find_duplicates_in_files
 import numpy as np
 import json
 from contextlib import asynccontextmanager
+from test_response import test_response
 
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -55,14 +56,14 @@ async def dedupe_files(
     training_data: str = Form(None),
     selected_columns: str = Form(None)
 ):
-    """
-    Upload one or more CSV/Excel files and find duplicates.
-    
-    Args:
-        files: List of files to process (CSV or Excel)
-        similarity_threshold: Threshold for duplicate matching (0-1)
-        training_data: Training data as JSON string
-    """
+    response_obj = {
+                "status": "success",
+                "duplicates": test_response
+            }
+    return JSONResponse(
+            content=json.loads(json.dumps(response_obj, cls=NumpyEncoder))
+        )
+   
     try:
         if selected_columns:
             print(f"Received selected columns: {selected_columns[:100]}...")  # Print first 100 chars for debugging
