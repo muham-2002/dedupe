@@ -20,6 +20,7 @@ type RecordType = {
   source_file?: string;
   cluster_id?: string;
   excel_row?: number;
+  __source_file?: string; // Internal property to track source file
   [key: string]: string | number | undefined;
 }
 
@@ -30,6 +31,7 @@ export function useFileProcessor() {
   const [originalFileData, setOriginalFileData] = useState<RecordType[]>([])
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [sourceFileNames, setSourceFileNames] = useState<Record<string, string>>({})
   const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000'
 
   const processFile = async (file: File, trainingData: any, setTrainingData: any, selectedColumns?: string[]) => {
@@ -101,38 +103,58 @@ export function useFileProcessor() {
         Papa.parse(file, {
           header: true,
           complete: (results) => {
-            // Add row numbers as record_id (accounting for header and 1-based indexing)
-            const dataWithIds = results.data.map((row: any) => Object.assign({}, row, {
-              record_id: results.data.indexOf(row).toString()
-            })) as RecordType[]
-            setOriginalFileData(dataWithIds)
-            resolve(dataWithIds)
+            // Add row numbers as record_id and source file name (accounting for header and 1-based indexing)
+            const dataWithIds = results.data.map((row: any) => {
+              const recordId = results.data.indexOf(row).toString();
+              return {
+                ...row,
+                record_id: recordId,
+                __source_file: file.name // Add source file name but don't expose it
+              };
+            }) as RecordType[];
+            setOriginalFileData(dataWithIds);
+            // Store file name mapping
+            setSourceFileNames(prev => ({
+              ...prev,
+              [file.name]: file.name
+            }));
+            resolve(dataWithIds);
           },
           error: reject
-        })
+        });
       } else if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
-        const reader = new FileReader()
+        const reader = new FileReader();
         reader.onload = (e) => {
           try {
-            const data = new Uint8Array(e.target?.result as ArrayBuffer)
-            const workbook = XLSX.read(data, { type: 'array' })
-            const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
-            const jsonData = XLSX.utils.sheet_to_json(firstSheet)
-            // Add row numbers as record_id (accounting for header and 1-based indexing)
-            const dataWithIds = jsonData.map((row: any) => Object.assign({}, row, {
-              record_id: jsonData.indexOf(row).toString()
-            })) as RecordType[]
-            setOriginalFileData(dataWithIds)
-            resolve(dataWithIds)
+            const data = new Uint8Array(e.target?.result as ArrayBuffer);
+            const workbook = XLSX.read(data, { type: 'array' });
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+            const jsonData = XLSX.utils.sheet_to_json(firstSheet);
+            // Add row numbers as record_id and source file name
+            const dataWithIds = jsonData.map((row: any) => {
+              const recordId = jsonData.indexOf(row).toString();
+              return {
+                ...row,
+                record_id: recordId,
+                __source_file: file.name // Add source file name but don't expose it
+              };
+            }) as RecordType[];
+            setOriginalFileData(dataWithIds);
+            // Store file name mapping
+            setSourceFileNames(prev => ({
+              ...prev,
+              [file.name]: file.name
+            }));
+            resolve(dataWithIds);
           } catch (error) {
-            reject(error)
+            reject(error);
           }
-        }
-        reader.onerror = reject
-        reader.readAsArrayBuffer(file)
+        };
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(file);
       }
-    })
-  }
+    });
+  };
 
   const resetAll = () => {
     setDuplicates([])
@@ -160,16 +182,21 @@ export function useFileProcessor() {
       // Start with original file data and filter out records to remove
       const processedRecords = originalFileData
         .filter(record => !recordsToRemove.includes(+record.record_id))
-        .map(record => ({
-          ...record,
-          // Add cluster_id, confidence_score, and source_file if the record was in a duplicate group
-          cluster_id: clusterMap.has(record.record_id) ? (clusterMap.get(record.record_id) + 1).toString() : '',
-          confidence_score: confidenceMap.has(record.record_id) ? confidenceMap.get(record.record_id) : '',
-          source_file: sourceFileMap.has(record.record_id) ? sourceFileMap.get(record.record_id) : originalFile?.name || ''
-        }));
+        .map(record => {
+          const result = {
+            ...record,
+            // Add cluster_id, confidence_score if the record was in a duplicate group
+            cluster_id: clusterMap.has(record.record_id) ? (clusterMap.get(record.record_id) + 1).toString() : '',
+            confidence_score: confidenceMap.has(record.record_id) ? confidenceMap.get(record.record_id) : '',
+            source_file: sourceFileMap.has(record.record_id) ? sourceFileMap.get(record.record_id) : record.__source_file || ''
+          };
+          // Remove the internal __source_file property
+          delete result.__source_file;
+          return result;
+        });
 
       // Get all headers from the processed records except the special columns
-      const specialColumns = ['cluster_id', 'confidence_score', 'source_file'];
+      const specialColumns = ['cluster_id', 'confidence_score', 'source_file', '__source_file'];
       
       const regularHeaders = Array.from(
         new Set(
@@ -177,8 +204,8 @@ export function useFileProcessor() {
         )
       ).filter(header => !specialColumns.includes(header)).sort();
 
-      // Combine headers with special columns at the end
-      const allHeaders = [...regularHeaders, ...specialColumns];
+      // Combine headers with special columns at the end (excluding __source_file)
+      const allHeaders = [...regularHeaders, 'cluster_id', 'confidence_score', 'source_file'];
 
       // Convert records to CSV with consistent columns
       const csvContent = [
@@ -205,7 +232,7 @@ export function useFileProcessor() {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      URL.revokeObjectURL(url); // Clean up the URL object
+      URL.revokeObjectURL(url);
     } catch (error) {
       console.error('Error downloading file:', error);
       toast.error('Error downloading file');

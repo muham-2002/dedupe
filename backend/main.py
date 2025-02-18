@@ -56,13 +56,13 @@ async def dedupe_files(
     training_data: str = Form(None),
     selected_columns: str = Form(None)
 ):
-    response_obj = {
-                "status": "success",
-                "duplicates": test_response
-            }
-    return JSONResponse(
-            content=json.loads(json.dumps(response_obj, cls=NumpyEncoder))
-        )
+    # response_obj = {
+    #             "status": "success",
+    #             "duplicates": test_response
+    #         }
+    # return JSONResponse(
+    #         content=json.loads(json.dumps(response_obj, cls=NumpyEncoder))
+    #     )
    
     try:
         if selected_columns:

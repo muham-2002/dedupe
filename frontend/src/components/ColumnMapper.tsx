@@ -44,7 +44,58 @@ export default function ColumnMapper({
   const [fileMeta, setFileMeta] = useState({
     source: 1,
     target: 2
-  })
+  });
+  const [useAutoMode, setUseAutoMode] = useState(true);
+
+  const setupColumnMapping = (columns1: string[], columns2: string[], isAuto: boolean) => {
+    let sourceColumns: string[];
+    let targetColumns: string[];
+    let sourceMeta: number;
+    let targetMeta: number;
+
+    if (isAuto) {
+      // Automatic mode based on column count
+      if (columns1.length >= columns2.length) {
+        targetColumns = columns1;
+        sourceColumns = columns2;
+        sourceMeta = 2;
+        targetMeta = 1;
+      } else {
+        targetColumns = columns2;
+        sourceColumns = columns1;
+        sourceMeta = 1;
+        targetMeta = 2;
+      }
+    } else {
+      // Manual mode - first file is source
+      sourceColumns = columns1;
+      targetColumns = columns2;
+      sourceMeta = 1;
+      targetMeta = 2;
+    }
+
+    setTargetColumns(targetColumns);
+    setSourceColumns(sourceColumns);
+    setAvailableColumns([...new Set([...columns1, ...columns2])]);
+    setFileMeta({
+      source: sourceMeta,
+      target: targetMeta
+    });
+
+    // Auto-map columns with same names
+    const initialMappings: Record<string, string> = {};
+    const initialSelectedTargets: string[] = [];
+    
+    sourceColumns.forEach(sourceCol => {
+      if (targetColumns.includes(sourceCol)) {
+        initialMappings[sourceCol] = sourceCol;
+        initialSelectedTargets.push(sourceCol);
+      }
+    });
+
+    setMappings(initialMappings);
+    setSelectedTargetColumns(initialSelectedTargets);
+  };
 
   useEffect(() => {
     const processFiles = async () => {
@@ -63,51 +114,13 @@ export default function ColumnMapper({
           return;
         }
 
-        // Existing code for handling two files
+        // Get columns from both files
         const [columns1, columns2] = await Promise.all([
           getFileColumns(file1),
           getFileColumns(file2),
         ]);
 
-        // Store which file is source/target based on column count
-        let sourceColumns: string[];
-        let targetColumns: string[];
-        let sourceMeta: number;
-        let targetMeta: number;
-
-        if (columns1.length >= columns2.length) {
-          targetColumns = columns1;
-          sourceColumns = columns2;
-          sourceMeta = 2;
-          targetMeta = 1;
-        } else {
-          targetColumns = columns2;
-          sourceColumns = columns1;
-          sourceMeta = 1;
-          targetMeta = 2;
-        }
-
-        setTargetColumns(targetColumns);
-        setSourceColumns(sourceColumns);
-        setAvailableColumns(sourceColumns);
-        setFileMeta({
-          source: sourceMeta,
-          target: targetMeta
-        });
-
-        // Auto-map columns with same names
-        const initialMappings: Record<string, string> = {};
-        const initialSelectedTargets: string[] = [];
-        
-        sourceColumns.forEach(sourceCol => {
-          if (targetColumns.includes(sourceCol)) {
-            initialMappings[sourceCol] = sourceCol;
-            initialSelectedTargets.push(sourceCol);
-          }
-        });
-
-        setMappings(initialMappings);
-        setSelectedTargetColumns(initialSelectedTargets);
+        setupColumnMapping(columns1, columns2, useAutoMode);
         setIsProcessingFiles(false);
       } catch (err) {
         console.error('Error processing files:', err);
@@ -119,7 +132,7 @@ export default function ColumnMapper({
     };
 
     processFiles();
-  }, [file1, file2]);
+  }, [file1, file2, useAutoMode]);
 
   const getFileColumns = async (file: File): Promise<string[]> => {
     return new Promise((resolve, reject) => {
@@ -204,20 +217,9 @@ export default function ColumnMapper({
   };
 
   const handleComplete = () => {
-    // Validate all source columns are mapped
-    const unmappedColumns = sourceColumns.filter((col) => !mappings[col]);
-    if (unmappedColumns.length > 0) {
-      setError(
-        `Please map all columns. Missing mappings for: ${unmappedColumns.join(
-          ", "
-        )}`
-      );
-      return;
-    }
+    // No validation needed since unmapped columns will be included automatically
     onMappingComplete(mappings, fileMeta.source, fileMeta.target);
   };
-
-  const isComplete = sourceColumns.every((col) => mappings[col]);
 
   if (isProcessingFiles) {
     return (
@@ -234,9 +236,21 @@ export default function ColumnMapper({
       <CardHeader>
         <CardTitle>Map Columns</CardTitle>
         <CardDescription>
-          Map columns between your files. The file with {targetColumns.length}{" "}
-          columns is set as the target format. Common columns have been automatically mapped.
+          Map columns between your files. {useAutoMode ? 
+            "The file with more columns is set as the target format." : 
+            "The first file's columns are shown on the left."}
+          Common columns have been automatically mapped. Unmapped columns will be included in the merged file.
         </CardDescription>
+        <div className="flex items-center justify-end space-x-2 mt-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setUseAutoMode(!useAutoMode)}
+            className="text-xs"
+          >
+            Switch Files Column
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="grid gap-6">
@@ -275,14 +289,17 @@ export default function ColumnMapper({
       </CardContent>
 
       <CardFooter className="flex justify-between">
+          <Button 
+            variant="ghost" 
+            onClick={handleReset}
+          >
+            Reset
+          </Button>
         <Button 
-          variant="ghost" 
-          onClick={handleReset}
-          className={isComplete ? "opacity-50 cursor-not-allowed" : ""}
+          variant="default" 
+          className="button-hover" 
+          onClick={handleComplete}
         >
-          Reset
-        </Button>
-        <Button variant="default" className="button-hover" onClick={handleComplete} disabled={!isComplete}>
           Complete Mapping
         </Button>
       </CardFooter>

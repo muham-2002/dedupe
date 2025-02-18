@@ -58,6 +58,8 @@ export const mergeCSVFiles = async (files: File[], mapping: Record<string, strin
     throw new Error('Please select exactly 2 CSV files');
   }
 
+  console.log('Starting CSV merge with mapping:', mapping);
+
   // Read both files
   const [file1Content, file2Content] = await Promise.all([
     readFileAsText(files[0]),
@@ -70,36 +72,108 @@ export const mergeCSVFiles = async (files: File[], mapping: Record<string, strin
   const file1Headers = file1Lines[0].split(',').map(h => h.trim());
   const file2Headers = file2Lines[0].split(',').map(h => h.trim());
 
-  // Create mapping from file2 column index to file1 column index
+  console.log('File 1 headers:', file1Headers);
+  console.log('File 2 headers:', file2Headers);
+
+  // Get mapped headers
+  const mappedTargetHeaders = new Set(Object.keys(mapping)); // Headers from file1 that are mapped
+  const mappedSourceHeaders = new Set(Object.values(mapping)); // Headers from file2 that are mapped to
+  console.log('Mapped target headers (from file 1):', Array.from(mappedTargetHeaders));
+  console.log('Mapped source headers (from file 2):', Array.from(mappedSourceHeaders));
+  
+  // Get unmapped headers from both files
+  const unmappedFile1Headers = file1Headers.filter(h => !mappedTargetHeaders.has(h));
+  const unmappedFile2Headers = file2Headers.filter(h => !mappedSourceHeaders.has(h));
+  console.log('Unmapped headers from file 1:', unmappedFile1Headers);
+  console.log('Unmapped headers from file 2:', unmappedFile2Headers);
+  
+  // Create final headers array:
+  // 1. Mapped columns from file1 (target columns)
+  // 2. Unmapped columns from file1
+  // 3. Unmapped columns from file2
+  const finalHeaders = [
+    ...Array.from(mappedTargetHeaders),
+    ...unmappedFile1Headers,
+    ...unmappedFile2Headers
+  ];
+  console.log('Final headers:', finalHeaders);
+
+  // Create mapping from file2 column index to final header index
   const columnMapping: Record<number, number> = {};
-  Object.entries(mapping).forEach(([sourceCol, targetCol]) => {
+  Object.entries(mapping).forEach(([targetCol, sourceCol]) => {
     const file2Index = file2Headers.indexOf(sourceCol);
-    const file1Index = file1Headers.indexOf(targetCol);
-    if (file2Index !== -1 && file1Index !== -1) {
-      columnMapping[file2Index] = file1Index;
+    const finalIndex = finalHeaders.indexOf(targetCol);
+    if (file2Index !== -1 && finalIndex !== -1) {
+      columnMapping[file2Index] = finalIndex;
     }
   });
+  console.log('Column index mapping:', columnMapping);
 
   // Process file1 data rows
-  const mergedData = [file1Lines[0]]; // Start with file1 headers
+  const mergedData = [finalHeaders.join(',')]; // Start with final headers
   const file1Data = file1Lines.slice(1).map(line => line.split(',').map(cell => cell.trim()));
-  mergedData.push(...file1Data.map(row => row.join(',')));
-
-  // Process and map file2 data rows
-  const file2Data = file2Lines.slice(1).map(line => line.split(',').map(cell => cell.trim()));
-  file2Data.forEach(row2 => {
-    console.log(row2);
-    const newRow = Array(file1Headers.length).fill('');
-    Object.entries(columnMapping).forEach(([file2Index, file1Index]) => {
-      newRow[file1Index] = row2[Number(file2Index)];
+  
+  console.log('Processing file 1 rows...');
+  // Add file1 rows
+  file1Data.forEach((row1, idx) => {
+    const newRow = Array(finalHeaders.length).fill('');
+    
+    // Fill all columns from file1
+    file1Headers.forEach((header, index) => {
+      const finalIndex = finalHeaders.indexOf(header);
+      if (finalIndex !== -1) {
+        newRow[finalIndex] = row1[index];
+      }
     });
+    
+    // Add source file name
+    newRow.push(files[0].name);
+    
+    if (idx === 0) console.log('Sample row from file 1:', newRow);
     mergedData.push(newRow.join(','));
   });
 
+  // Process file2 data rows
+  const file2Data = file2Lines.slice(1).map(line => line.split(',').map(cell => cell.trim()));
+  
+  console.log('Processing file 2 rows...');
+  // Add file2 rows
+  file2Data.forEach((row2, idx) => {
+    const newRow = Array(finalHeaders.length).fill('');
+    
+    // Fill mapped columns using mapping
+    Object.entries(columnMapping).forEach(([file2Index, finalIndex]) => {
+      newRow[finalIndex] = row2[Number(file2Index)];
+    });
+    
+    // Fill only unmapped columns from file2
+    file2Headers.forEach((header, index) => {
+      if (!mappedSourceHeaders.has(header)) {
+        const finalIndex = finalHeaders.indexOf(header);
+        if (finalIndex !== -1) {
+          newRow[finalIndex] = row2[index];
+        }
+      }
+    });
+    
+    // Add source file name
+    newRow.push(files[1].name);
+    
+    if (idx === 0) console.log('Sample row from file 2:', newRow);
+    mergedData.push(newRow.join(','));
+  });
+
+  // Add source_file to headers if not already present
+  if (!finalHeaders.includes('source_file')) {
+    finalHeaders.push('source_file');
+    mergedData[0] = finalHeaders.join(',');
+  }
+
+  console.log('Merge complete. First row of merged data:', mergedData[0]);
+  console.log('Sample data row:', mergedData[1]);
+
   // Create new Blob with merged content
-  const mergedBlob = new Blob([mergedData.join('\n')], { type: 'text/csv' });
-  console.log(mergedBlob)
-  return mergedBlob;
+  return new Blob([mergedData.join('\n')], { type: 'text/csv' });
 };
 
 // Helper function to read file as ArrayBuffer
@@ -117,6 +191,8 @@ export const mergeXLSXFiles = async (files: File[], mapping: Record<string, stri
   if (files.length !== 2) {
     throw new Error('Please select exactly 2 XLSX files');
   }
+
+  console.log('Starting XLSX merge with mapping:', mapping);
 
   // Read and parse all files
   const workbooks = await Promise.all(
@@ -140,27 +216,98 @@ export const mergeXLSXFiles = async (files: File[], mapping: Record<string, stri
   const file1Headers = file1Data[0] as string[];
   const file2Headers = file2Data[0] as string[];
 
-  // Create mapping from file2 column index to file1 column index
+  console.log('File 1 headers:', file1Headers);
+  console.log('File 2 headers:', file2Headers);
+
+  // Get mapped headers
+  const mappedTargetHeaders = new Set(Object.keys(mapping)); // Headers from file1 that are mapped
+  const mappedSourceHeaders = new Set(Object.values(mapping)); // Headers from file2 that are mapped to
+  console.log('Mapped target headers (from file 1):', Array.from(mappedTargetHeaders));
+  console.log('Mapped source headers (from file 2):', Array.from(mappedSourceHeaders));
+  
+  // Get unmapped headers from both files
+  const unmappedFile1Headers = file1Headers.filter(h => !mappedTargetHeaders.has(h));
+  const unmappedFile2Headers = file2Headers.filter(h => !mappedSourceHeaders.has(h));
+  console.log('Unmapped headers from file 1:', unmappedFile1Headers);
+  console.log('Unmapped headers from file 2:', unmappedFile2Headers);
+  
+  // Create final headers array:
+  // 1. Mapped columns from file1 (target columns)
+  // 2. Unmapped columns from file1
+  // 3. Unmapped columns from file2
+  const finalHeaders = [
+    ...Array.from(mappedTargetHeaders),
+    ...unmappedFile1Headers,
+    ...unmappedFile2Headers,
+    'source_file' // Add source_file column
+  ];
+  console.log('Final headers:', finalHeaders);
+
+  // Create mapping from file2 column index to final header index
   const columnMapping: Record<number, number> = {};
-  Object.entries(mapping).forEach(([sourceCol, targetCol]) => {
+  Object.entries(mapping).forEach(([targetCol, sourceCol]) => {
     const file2Index = file2Headers.indexOf(sourceCol);
-    const file1Index = file1Headers.indexOf(targetCol);
-    if (file2Index !== -1 && file1Index !== -1) {
-      columnMapping[file2Index] = file1Index;
+    const finalIndex = finalHeaders.indexOf(targetCol);
+    if (file2Index !== -1 && finalIndex !== -1) {
+      columnMapping[file2Index] = finalIndex;
     }
   });
-  // Start with file1 data
-  const mergedData: any[][] = [...file1Data as any[][]];
+  console.log('Column index mapping:', columnMapping);
 
-  // Process and map file2 data rows
-  const file2Rows = file2Data.slice(1) as any[][];
-  file2Rows.forEach(row2 => {
-    const newRow = Array(file1Headers.length).fill('');
-    Object.entries(columnMapping).forEach(([file2Index, file1Index]) => {
-      newRow[file1Index] = row2[Number(file2Index)];
+  // Initialize merged data with headers
+  const mergedData: any[][] = [finalHeaders];
+
+  console.log('Processing file 1 rows...');
+  // Process file1 rows
+  const file1Rows = file1Data.slice(1) as any[][];
+  file1Rows.forEach((row1, idx) => {
+    const newRow = Array(finalHeaders.length).fill('');
+    
+    // Fill mapped columns from file1
+    file1Headers.forEach((header, index) => {
+      const finalIndex = finalHeaders.indexOf(header);
+      if (finalIndex !== -1) {
+        newRow[finalIndex] = row1[index];
+      }
     });
+    
+    // Add source file name
+    newRow[finalHeaders.indexOf('source_file')] = files[0].name;
+    
+    if (idx === 0) console.log('Sample row from file 1:', newRow);
     mergedData.push(newRow);
   });
+
+  console.log('Processing file 2 rows...');
+  // Process file2 rows
+  const file2Rows = file2Data.slice(1) as any[][];
+  file2Rows.forEach((row2, idx) => {
+    const newRow = Array(finalHeaders.length).fill('');
+    
+    // Fill mapped columns using mapping
+    Object.entries(columnMapping).forEach(([file2Index, finalIndex]) => {
+      newRow[finalIndex] = row2[Number(file2Index)];
+    });
+    
+    // Fill only unmapped columns from file2
+    file2Headers.forEach((header, index) => {
+      if (!mappedSourceHeaders.has(header)) {
+        const finalIndex = finalHeaders.indexOf(header);
+        if (finalIndex !== -1) {
+          newRow[finalIndex] = row2[index];
+        }
+      }
+    });
+    
+    // Add source file name
+    newRow[finalHeaders.indexOf('source_file')] = files[1].name;
+    
+    if (idx === 0) console.log('Sample row from file 2:', newRow);
+    mergedData.push(newRow);
+  });
+
+  console.log('Merge complete. Headers:', mergedData[0]);
+  console.log('Sample data row:', mergedData[1]);
 
   // Create new workbook with merged data
   const newWorkbook = XLSX.utils.book_new();

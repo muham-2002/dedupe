@@ -18,17 +18,17 @@ logger = logging.getLogger(__name__)
 def preprocess(column):
     """Clean data using Unidecode and Regex"""
     if not column:
-        return ""
+        return "N/A"
     
     column = unidecode(str(column))
     # Replace 'nan' with ''
     if column.lower() == 'nan':
-        return ""
+        return "N/A"
         
     column = re.sub('  +', ' ', column)
     column = re.sub('\n', ' ', column)
     column = column.strip().strip('"').strip("'").lower().strip()
-    return "" if not column else column
+    return "N/A" if not column else column
 
 def convert_df_to_dedupe_format(df: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
     """Convert DataFrame to dictionary format required by dedupe"""
@@ -406,8 +406,8 @@ def find_top_matching_pairs(training_pairs: List[Dict], config: Dict) -> List[Di
     for pair in training_pairs:
         match_score = 0
         for field in match_columns:
-            val1 = str(pair['0'].get(field, '')).lower().strip()
-            val2 = str(pair['1'].get(field, '')).lower().strip()
+            val1 = str(pair['0'].get(field, 'N/A')).lower().strip()
+            val2 = str(pair['1'].get(field, 'N/A')).lower().strip()
             if val1 and val2 and val1 == val2:
                 match_score += 1
         

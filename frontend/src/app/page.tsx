@@ -83,7 +83,6 @@ export default function Home() {
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
   const [availableColumns, setAvailableColumns] = useState<string[]>([]);
   const [sortOption, setSortOption] = useState<SortOption>("group-id");
-  const [data, setData] = useState<any>(null);
 
   const handleClearAll = () => {
     setSelectedRecords({});
