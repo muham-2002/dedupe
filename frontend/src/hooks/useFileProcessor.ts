@@ -6,32 +6,13 @@ import axios from 'axios'
 import Papa from 'papaparse'
 import * as XLSX from 'xlsx'
 
-type RecordType = {
-  Customer: string;
-  "Name 1": string;
-  "Name 2": string;
-  Street: string;
-  "Postal Code": string;
-  City: string;
-  Region: string;
-  Country: string;
-  record_id: string;
-  confidence_score?: number;
-  source_file?: string;
-  cluster_id?: string;
-  excel_row?: number;
-  __source_file?: string; // Internal property to track source file
-  [key: string]: string | number | undefined;
-}
-
 export function useFileProcessor() {
   const [duplicates, setDuplicates] = useState<GroupType[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [originalFile, setOriginalFile] = useState<File | null>(null)
-  const [originalFileData, setOriginalFileData] = useState<RecordType[]>([])
+  const [originalFileData, setOriginalFileData] = useState<any>([])
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const [sourceFileNames, setSourceFileNames] = useState<Record<string, string>>({})
   const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000'
 
   const processFile = async (file: File, trainingData: any, setTrainingData: any, selectedColumns?: string[]) => {
@@ -47,8 +28,6 @@ export function useFileProcessor() {
       formData.append('similarity_threshold', '0.2')
       formData.append('training_data', JSON.stringify(trainingData))
       selectedColumns != undefined ? formData.append('selected_columns', JSON.stringify(selectedColumns)) : null
-      console.log("trainingData: ", trainingData)
-      console.log("selectedColumns: ", selectedColumns)
 
       if (originalFile) {
         await readAndStoreOriginalFile(originalFile)
@@ -65,7 +44,6 @@ export function useFileProcessor() {
         maxRedirects: 0
       });
       
-      console.log("response: ", response)
 
       if (response.status !== 200) {
         throw new Error('Failed to process file')
@@ -107,17 +85,12 @@ export function useFileProcessor() {
             const dataWithIds = results.data.map((row: any) => {
               const recordId = results.data.indexOf(row).toString();
               return {
-                ...row,
+              ...row,
                 record_id: recordId,
                 __source_file: file.name // Add source file name but don't expose it
               };
-            }) as RecordType[];
+            }) as any[];
             setOriginalFileData(dataWithIds);
-            // Store file name mapping
-            setSourceFileNames(prev => ({
-              ...prev,
-              [file.name]: file.name
-            }));
             resolve(dataWithIds);
           },
           error: reject
@@ -134,17 +107,12 @@ export function useFileProcessor() {
             const dataWithIds = jsonData.map((row: any) => {
               const recordId = jsonData.indexOf(row).toString();
               return {
-                ...row,
+              ...row,
                 record_id: recordId,
                 __source_file: file.name // Add source file name but don't expose it
               };
-            }) as RecordType[];
+            }) as any[];
             setOriginalFileData(dataWithIds);
-            // Store file name mapping
-            setSourceFileNames(prev => ({
-              ...prev,
-              [file.name]: file.name
-            }));
             resolve(dataWithIds);
           } catch (error) {
             reject(error);
@@ -166,37 +134,30 @@ export function useFileProcessor() {
 
   const downloadFile = async (recordsToRemove: number[]) => {
     try {
-      // Create maps for cluster_id, confidence_score, and source_file
-      const clusterMap = new Map();
-      const confidenceMap = new Map();
-      const sourceFileMap = new Map();
+      // Create a set of records to remove for faster lookup
+      const recordsToRemoveSet = new Set(recordsToRemove);
       
-      duplicates.forEach(group => {
-        group.records.forEach(record => {
-          clusterMap.set(record.record_id, group.cluster_id);
-          confidenceMap.set(record.record_id, record.confidence_score);
-          sourceFileMap.set(record.record_id, record.source_file);
-        });
-      });
-
-      // Start with original file data and filter out records to remove
-      const processedRecords = originalFileData
-        .filter(record => !recordsToRemove.includes(+record.record_id))
-        .map(record => {
-          const result = {
+      // Create a map of record_id to source file from originalFileData
+      const recordIdToSourceFile = new Map(
+        originalFileData.map((record: any) => [record.record_id, record.source_file ? record.source_file : record.__source_file])
+      );
+      
+      // Collect all records from duplicate groups
+      const processedRecords = duplicates.flatMap(group => 
+        group.records
+          // Filter out records that are marked for removal
+          .filter(record => !recordsToRemoveSet.has(+record.record_id))
+          .map(record => ({
             ...record,
-            // Add cluster_id, confidence_score if the record was in a duplicate group
-            cluster_id: clusterMap.has(record.record_id) ? (clusterMap.get(record.record_id) + 1).toString() : '',
-            confidence_score: confidenceMap.has(record.record_id) ? confidenceMap.get(record.record_id) : '',
-            source_file: sourceFileMap.has(record.record_id) ? sourceFileMap.get(record.record_id) : record.__source_file || ''
-          };
-          // Remove the internal __source_file property
-          delete result.__source_file;
-          return result;
-        });
+            cluster_id: (group.cluster_id + 1).toString(),
+            confidence_score: record.confidence_score || '',
+            // Look up the source file from originalFileData using record_id
+            source_file: recordIdToSourceFile.get(record.record_id) || ''
+          }))
+      );
 
       // Get all headers from the processed records except the special columns
-      const specialColumns = ['cluster_id', 'confidence_score', 'source_file', '__source_file'];
+      const specialColumns = ['cluster_id', 'confidence_score', 'source_file', '__source_file', 'record_id'];
       
       const regularHeaders = Array.from(
         new Set(
@@ -205,14 +166,18 @@ export function useFileProcessor() {
       ).filter(header => !specialColumns.includes(header)).sort();
 
       // Combine headers with special columns at the end (excluding __source_file)
-      const allHeaders = [...regularHeaders, 'cluster_id', 'confidence_score', 'source_file'];
+      const allHeaders = [...regularHeaders, 'record_id', 'cluster_id', 'confidence_score', 'source_file'];
 
       // Convert records to CSV with consistent columns
       const csvContent = [
         allHeaders.join(','),
         ...processedRecords.map(record => 
           allHeaders.map(header => {
-            const value = (record as any)[header] ?? ''; // Use type assertion for dynamic access
+            let value = record[header] ?? ''; 
+            // Remove 'N/A' values
+            if (value === 'N/A') {
+              value = '';
+            }
             // Handle values that might contain commas, newlines, or quotes
             if (typeof value === 'string' && (value.includes(',') || value.includes('\n') || value.includes('"'))) {
               // Escape quotes and wrap in quotes
@@ -228,7 +193,7 @@ export function useFileProcessor() {
       const link = document.createElement('a');
       const url = URL.createObjectURL(blob);
       link.setAttribute('href', url);
-      link.setAttribute('download', 'deduplicated_data.csv');
+      link.setAttribute('download', 'duplicate_groups.csv');
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);

@@ -236,9 +236,7 @@ export default function ColumnMapper({
       <CardHeader>
         <CardTitle>Map Columns</CardTitle>
         <CardDescription>
-          Map columns between your files. {useAutoMode ? 
-            "The file with more columns is set as the target format." : 
-            "The first file's columns are shown on the left."}
+          Map columns between your files. Right columns are going to be merged into left one.
           Common columns have been automatically mapped. Unmapped columns will be included in the merged file.
         </CardDescription>
         <div className="flex items-center justify-end space-x-2 mt-2">

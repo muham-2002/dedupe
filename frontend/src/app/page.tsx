@@ -52,12 +52,6 @@ type SortOption = "confidence-high" | "confidence-low" | "group-id";
 // Add these types at the top
 type FileState = File[];
 
-interface ParseResult {
-  data: Record<string, unknown>[];
-  errors: Papa.ParseError[];
-  meta: Papa.ParseMeta;
-}
-
 export default function Home() {
   const [files, setFiles] = useState<FileState>([]);
   const {
@@ -142,7 +136,6 @@ export default function Home() {
         setTrainingData,
         selectedColumns
       );
-      console.log(pairs);
       setTrainingData(pairs);
     } else {
       toast.error("Please select at least two columns for matching");
@@ -155,7 +148,6 @@ export default function Home() {
     record: any,
     isSelected: boolean
   ) => {
-    console.log(duplicates);
     setSelectedRecords((prev) => {
       const newState = { ...prev };
       if (!newState[clusterId]) {
@@ -260,7 +252,6 @@ export default function Home() {
     const recordsToRemove = Object.values(selectedRecords)
       .flat()
       .map((record) => +record.record_id);
-    console.log(recordsToRemove);
     // Show warning if no duplicates are selected for removal
     if (recordsToRemove.length === 0) {
       toast.error(
