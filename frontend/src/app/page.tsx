@@ -199,8 +199,12 @@ export default function Home() {
   };
 
   const downloadWithDuplicates = () => {
+    // Prompt for filename
+    const filename = prompt("Enter filename for download (without extension):", "duplicate_groups");
+    if (!filename) return; // If user cancels or enters empty string
+    
     // Download all records, including duplicates
-    downloadFile([]);
+    downloadFile([], filename);
   };
 
   // Calculate max width for each column across all groups
@@ -260,8 +264,12 @@ export default function Home() {
       return;
     }
 
+    // Prompt for filename
+    const filename = prompt("Enter filename for download (without extension):", "deduplicated_data");
+    if (!filename) return; // If user cancels or enters empty string
+
     // Download file excluding the selected records
-    downloadFile(recordsToRemove);
+    downloadFile(recordsToRemove, filename);
   };
 
   const handleMappingComplete = async (
@@ -701,7 +709,7 @@ export default function Home() {
                     title="Download original file with all records"
                   >
                     <Download className="h-4 w-4" />
-                    Download Original
+                    Download All Duplicates
                   </Button>
                   <Button
                     onClick={handleDownloadDeduplicated}
@@ -709,7 +717,7 @@ export default function Home() {
                     title="Download file with selected duplicates removed"
                   >
                     <CheckCircle2 className="h-4 w-4" />
-                    Download Clean File
+                    Download Cleansed File
                   </Button>
                 </div>
               </div>
