@@ -132,7 +132,7 @@ export function useFileProcessor() {
     setError(null)
   }
 
-  const downloadFile = async (recordsToRemove: number[], filename?: string) => {
+  const downloadFile = async (recordsToRemove: number[]) => {
     try {
       // Create a set of records to remove for faster lookup
       const recordsToRemoveSet = new Set(recordsToRemove);
@@ -165,8 +165,8 @@ export function useFileProcessor() {
         )
       ).filter(header => !specialColumns.includes(header)).sort();
 
-      // Combine headers with cluster_id first, then regular headers, then remaining special columns
-      const allHeaders = ['cluster_id', ...regularHeaders, 'record_id', 'confidence_score', 'source_file'];
+      // Combine headers with special columns at the end (excluding __source_file)
+      const allHeaders = [...regularHeaders, 'record_id', 'cluster_id', 'confidence_score', 'source_file'];
 
       // Convert records to CSV with consistent columns
       const csvContent = [
@@ -193,7 +193,7 @@ export function useFileProcessor() {
       const link = document.createElement('a');
       const url = URL.createObjectURL(blob);
       link.setAttribute('href', url);
-      link.setAttribute('download', `${filename || 'duplicate_groups'}.csv`);
+      link.setAttribute('download', 'duplicate_groups.csv');
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
