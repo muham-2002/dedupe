@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import shutil
 import os
-from typing import Any, List
+from typing import List
 import tempfile
 from dedupe_script import find_duplicates_in_files
 import numpy as np
@@ -56,13 +56,13 @@ async def dedupe_files(
     training_data: str = Form(None),
     selected_columns: str = Form(None)
 ):
-    # response_obj = {
-    #             "status": "success",
-    #             "duplicates": test_response
-    #         }
-    # return JSONResponse(
-    #         content=json.loads(json.dumps(response_obj, cls=NumpyEncoder))
-    #     )
+    response_obj = {
+                "status": "success",
+                "duplicates": test_response
+            }
+    return JSONResponse(
+            content=json.loads(json.dumps(response_obj, cls=NumpyEncoder))
+        )
    
     try:
         if selected_columns:

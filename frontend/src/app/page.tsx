@@ -41,7 +41,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import ColumnMapper from "@/components/ColumnMapper";
-import Papa from "papaparse";
 import { mergeCSVFiles, mergeXLSXFiles } from "@/utils/fileUtils";
 
 const Confetti = dynamic(() => import("@/components/Confetti"), { ssr: false });
@@ -76,7 +75,14 @@ export default function Home() {
   const [isFinishLoading, setIsFinishLoading] = useState(false);
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
   const [availableColumns, setAvailableColumns] = useState<string[]>([]);
-  const [sortOption, setSortOption] = useState<SortOption>("group-id");
+  const [sortOption, setSortOption] = useState<SortOption>("confidence-high");
+  const [currentGroupIndex, setCurrentGroupIndex] = useState<number>(0);
+  const [maxVisitedGroupIndex, setMaxVisitedGroupIndex] = useState<number>(0);
+  const [showPairsModal, setShowPairsModal] = useState(false);
+  const [generatedPairs, setGeneratedPairs] = useState<{
+    matchedPairs: Array<[any, any]>;
+    unmatchedPairs: Array<[any, any]>;
+  }>({ matchedPairs: [], unmatchedPairs: [] });
 
   const handleClearAll = () => {
     setSelectedRecords({});
@@ -87,6 +93,10 @@ export default function Home() {
     setCurrentPairIndex(0);
     setUserResponses({});
     setIsFinishLoading(false);
+    setCurrentGroupIndex(0);
+    setMaxVisitedGroupIndex(0);
+    setShowPairsModal(false);
+    setGeneratedPairs({ matchedPairs: [], unmatchedPairs: [] });
     resetAll();
   };
 
@@ -537,6 +547,177 @@ export default function Home() {
     });
   };
 
+  // Add this function to handle navigation between groups
+  const handleNextGroup = () => {
+    if (currentGroupIndex < getSortedDuplicates().length - 1) {
+      const nextIndex = currentGroupIndex + 1;
+      setCurrentGroupIndex(nextIndex);
+      setMaxVisitedGroupIndex(Math.max(maxVisitedGroupIndex, nextIndex));
+    }
+  };
+
+  const handlePreviousGroup = () => {
+    if (currentGroupIndex > 0) {
+      setCurrentGroupIndex(prev => prev - 1);
+    }
+  };
+
+  const generatePairsFromGroups = () => {
+    const matchedPairs: Array<[any, any]> = [];
+    const unmatchedPairs: Array<[any, any]> = [];
+    
+    getSortedDuplicates().forEach(group => {
+      const selectedForDeletion = selectedRecords[group.cluster_id] || [];
+      const keptRecords = group.records.filter(record => 
+        !selectedForDeletion.some(r => r.record_id === record.record_id)
+      );
+      
+      // Generate matched pairs from kept records
+      for (let i = 0; i < keptRecords.length; i++) {
+        for (let j = i + 1; j < keptRecords.length; j++) {
+          matchedPairs.push([keptRecords[i], keptRecords[j]]);
+        }
+      }
+      
+      // Generate unmatched pairs between kept and deleted records
+      keptRecords.forEach(keptRecord => {
+        selectedForDeletion.forEach(deletedRecord => {
+          unmatchedPairs.push([keptRecord, deletedRecord]);
+        });
+      });
+    });
+
+    setGeneratedPairs({ matchedPairs, unmatchedPairs });
+    setShowPairsModal(true);
+  };
+
+  const PairsModal = () => {
+    if (!showPairsModal) return null;
+
+    // Get previous training pairs
+    const previousMatchedPairs = Object.entries(userResponses)
+      .filter(([_, response]) => response === "y")
+      .map(([index]) => trainingData[parseInt(index)]);
+
+    const previousUnmatchedPairs = Object.entries(userResponses)
+      .filter(([_, response]) => response === "n")
+      .map(([index]) => trainingData[parseInt(index)]);
+
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+        <Card className="w-full max-w-4xl max-h-[80vh] overflow-y-auto">
+          <CardHeader>
+            <CardTitle>Generated Pairs Analysis</CardTitle>
+            <Button 
+              variant="ghost" 
+              className="absolute right-2 top-2"
+              onClick={() => setShowPairsModal(false)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="space-y-4">
+              <h3 className="font-semibold">New Matched Pairs ({generatedPairs.matchedPairs.length})</h3>
+              {generatedPairs.matchedPairs.map((pair, idx) => (
+                <div key={idx} className="p-2 border rounded">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      {Object.entries(pair[0]).map(([key, value]) => (
+                        <div key={key} className="text-sm">
+                          <span className="font-medium">{key}:</span> {String(value)}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="space-y-1">
+                      {Object.entries(pair[1]).map(([key, value]) => (
+                        <div key={key} className="text-sm">
+                          <span className="font-medium">{key}:</span> {String(value)}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            <div className="space-y-4">
+              <h3 className="font-semibold">New Unmatched Pairs ({generatedPairs.unmatchedPairs.length})</h3>
+              {generatedPairs.unmatchedPairs.map((pair, idx) => (
+                <div key={idx} className="p-2 border rounded">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      {Object.entries(pair[0]).map(([key, value]) => (
+                        <div key={key} className="text-sm">
+                          <span className="font-medium">{key}:</span> {String(value)}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="space-y-1">
+                      {Object.entries(pair[1]).map(([key, value]) => (
+                        <div key={key} className="text-sm">
+                          <span className="font-medium">{key}:</span> {String(value)}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="space-y-4">
+              <h3 className="font-semibold">Previous Training Matched Pairs ({previousMatchedPairs.length})</h3>
+              {previousMatchedPairs.map((pair, idx) => (
+                <div key={idx} className="p-2 border rounded">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      {Object.entries(pair[0]).map(([key, value]) => (
+                        <div key={key} className="text-sm">
+                          <span className="font-medium">{key}:</span> {String(value)}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="space-y-1">
+                      {Object.entries(pair[1]).map(([key, value]) => (
+                        <div key={key} className="text-sm">
+                          <span className="font-medium">{key}:</span> {String(value)}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="space-y-4">
+              <h3 className="font-semibold">Previous Training Unmatched Pairs ({previousUnmatchedPairs.length})</h3>
+              {previousUnmatchedPairs.map((pair, idx) => (
+                <div key={idx} className="p-2 border rounded">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      {Object.entries(pair[0]).map(([key, value]) => (
+                        <div key={key} className="text-sm">
+                          <span className="font-medium">{key}:</span> {String(value)}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="space-y-1">
+                      {Object.entries(pair[1]).map(([key, value]) => (
+                        <div key={key} className="text-sm">
+                          <span className="font-medium">{key}:</span> {String(value)}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  };
+
   return (
     <main className="min-h-screen bg-gradient-to-br from-background via-muted/50 to-background">
       <div className="container mx-auto py-8 px-4">
@@ -672,7 +853,7 @@ export default function Home() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <h2 className="text-2xl font-semibold bg-gradient-to-r from-primary to-primary/80 bg-clip-text text-transparent">
-                  Duplicate Groups Found
+                  Duplicate Groups ({currentGroupIndex + 1} of {duplicates.length})
                 </h2>
                 <Button
                   variant="destructive"
@@ -682,18 +863,19 @@ export default function Home() {
                   <RotateCcw className="mr-2 h-4 w-4" />
                   Reset
                 </Button>
+                {maxVisitedGroupIndex >= 5 && (
+                  <Button
+                    onClick={generatePairsFromGroups}
+                    disabled={currentGroupIndex < 5}
+                    variant="secondary"
+                    className="button-hover shadow-md"
+                  >
+                    Reprocess Pairs
+                  </Button>
+                )}
               </div>
               <div className="flex items-center gap-4">
                 <div className="flex gap-2">
-                  <Button
-                    onClick={handleRemoveAllDuplicates}
-                    variant="secondary"
-                    className="button-hover shadow-md flex items-center gap-2"
-                    title="Select all duplicate records for removal"
-                  >
-                    <X className="h-4 w-4" />
-                    Select All Duplicates
-                  </Button>
                   <Button
                     onClick={downloadWithDuplicates}
                     variant="outline"
@@ -714,27 +896,27 @@ export default function Home() {
                 </div>
               </div>
             </div>
-            <div className="flex justify-end">
-              <Select
-                value={sortOption}
-                onValueChange={(value) => setSortOption(value as SortOption)}
+            <div className="flex justify-between items-center gap-4 mb-4">
+              <Button 
+                onClick={handlePreviousGroup}
+                disabled={currentGroupIndex === 0}
+                variant="outline"
               >
-                <SelectTrigger className="w-[220px]">
-                  <SelectValue placeholder="Sort by..." />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="group-id">Sort by Group ID</SelectItem>
-                  <SelectItem value="confidence-high">
-                    Confidence: High to Low
-                  </SelectItem>
-                  <SelectItem value="confidence-low">
-                    Confidence: Low to High
-                  </SelectItem>
-                </SelectContent>
-              </Select>
+                Previous Group
+              </Button>
+              <div className="text-sm text-muted-foreground">
+                Confidence Score: {getSortedDuplicates()[currentGroupIndex]?.confidence_score?.toFixed(2) || 'N/A'}
+              </div>
+              <Button 
+                onClick={handleNextGroup}
+                disabled={currentGroupIndex === getSortedDuplicates().length - 1}
+                variant="outline"
+              >
+                Next Group
+              </Button>
             </div>
             <div className="space-y-4">
-              {getSortedDuplicates().map((group) => (
+              {getSortedDuplicates().slice(currentGroupIndex, currentGroupIndex + 1).map((group) => (
                 <DuplicateGroup
                   key={group.cluster_id}
                   group={group}
@@ -746,6 +928,7 @@ export default function Home() {
             </div>
           </div>
         )}
+        {showPairsModal && <PairsModal />}
       </div>
       {showConfetti && <Confetti />}
     </main>
