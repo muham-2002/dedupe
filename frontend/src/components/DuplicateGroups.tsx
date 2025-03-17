@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
-import { CheckCircle2, X } from 'lucide-react'
+import { X } from 'lucide-react'
 
 interface DuplicateGroupProps {
   group: {
@@ -14,10 +14,10 @@ interface DuplicateGroupProps {
   onSelectRow: (clusterId: number, rowIndex: number, record: any, isSelected: boolean) => void
   columnWidths: Record<string, number>
   selectedRows: number[]
-  onSelectAllDuplicates?: () => void
+  visibleColumns: Set<string>
 }
 
-export default function DuplicateGroup({ group, onSelectRow, columnWidths, selectedRows, onSelectAllDuplicates }: DuplicateGroupProps) {
+export default function DuplicateGroup({ group, onSelectRow, columnWidths, selectedRows, visibleColumns }: DuplicateGroupProps) {
   const handleSelectRow = (rowIndex: number, record: any) => {
     const isSelected = selectedRows.includes(rowIndex)
     onSelectRow(group.cluster_id, rowIndex, record, !isSelected)
@@ -43,6 +43,7 @@ export default function DuplicateGroup({ group, onSelectRow, columnWidths, selec
                 <TableHead style={{ width: '100px', minWidth: '100px' }}>Action</TableHead>
                 {Object.keys(group.records[0])
                   .filter(key => !['confidence_score', 'source_file'].includes(key))
+                  .filter(key => visibleColumns.has(key))
                   .map((key) => (
                     <TableHead
                       key={key}
@@ -83,6 +84,7 @@ export default function DuplicateGroup({ group, onSelectRow, columnWidths, selec
                   </TableCell>
                   {Object.entries(record)
                     .filter(([key]) => !['confidence_score', 'source_file'].includes(key))
+                    .filter(([key]) => visibleColumns.has(key))
                     .map(([key, value], valueIndex) => (
                       <TableCell
                         key={valueIndex}
@@ -92,7 +94,6 @@ export default function DuplicateGroup({ group, onSelectRow, columnWidths, selec
                         {String(value)}
                       </TableCell>
                     ))}
-
                 </TableRow>
               ))}
             </TableBody>

@@ -8,7 +8,6 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
-  CardFooter,
 } from "@/components/ui/card";
 import { useFileProcessor } from "@/hooks/useFileProcessor";
 import FileUpload from "@/components/FileUpload";
@@ -19,7 +18,10 @@ import {
   Download,
   Loader2,
   RotateCcw,
-  X,
+  ChevronLeft,
+  Undo2,
+  SkipForward,
+  ChevronRight,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import dynamic from "next/dynamic";
@@ -42,6 +44,8 @@ import {
 } from "@/components/ui/table";
 import ColumnMapper from "@/components/ColumnMapper";
 import { mergeCSVFiles, mergeXLSXFiles } from "@/utils/fileUtils";
+import { MultiSelect } from "@/components/multi-select";
+import { FileNameDialog } from "@/components/FileNameDialog";
 
 const Confetti = dynamic(() => import("@/components/Confetti"), { ssr: false });
 
@@ -61,28 +65,30 @@ export default function Home() {
     progress,
     error,
     resetAll,
+    isFileNameDialogOpen,
+    setIsFileNameDialogOpen,
+    pendingDownload,
+    handleDownload
   } = useFileProcessor();
   const [showConfetti, setShowConfetti] = useState(false);
-  const [selectedRecords, setSelectedRecords] = useState<Record<number, any[]>>(
-    {}
-  );
+  const [selectedRecords, setSelectedRecords] = useState<Record<number, any[]>>({});
   const [apiCalled, setApiCalled] = useState(false);
   const [trainingData, setTrainingData] = useState<any>(null);
   const [currentPairIndex, setCurrentPairIndex] = useState<number>(0);
-  const [userResponses, setUserResponses] = useState<
-    Record<number, "y" | "n" | "u">
-  >({});
-  const [isFinishLoading, setIsFinishLoading] = useState(false);
+  const [userResponses, setUserResponses] = useState<Record<number, "y" | "n" | "u">>({});
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
   const [availableColumns, setAvailableColumns] = useState<string[]>([]);
   const [sortOption, setSortOption] = useState<SortOption>("confidence-high");
   const [currentGroupIndex, setCurrentGroupIndex] = useState<number>(0);
   const [maxVisitedGroupIndex, setMaxVisitedGroupIndex] = useState<number>(0);
-  const [showPairsModal, setShowPairsModal] = useState(false);
-  const [generatedPairs, setGeneratedPairs] = useState<{
-    matchedPairs: Array<[any, any]>;
-    unmatchedPairs: Array<[any, any]>;
-  }>({ matchedPairs: [], unmatchedPairs: [] });
+  const [skippedGroups, setSkippedGroups] = useState<Set<number>>(new Set());
+  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(new Set());
+  const [appState, setAppState] = useState<'initial' | 'training' | 'reviewing'>('initial');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [processingStatus, setProcessingStatus] = useState<{
+    isProcessing: boolean;
+    message: string;
+  }>({ isProcessing: false, message: '' });
 
   const handleClearAll = () => {
     setSelectedRecords({});
@@ -92,11 +98,10 @@ export default function Home() {
     setTrainingData(null);
     setCurrentPairIndex(0);
     setUserResponses({});
-    setIsFinishLoading(false);
     setCurrentGroupIndex(0);
     setMaxVisitedGroupIndex(0);
-    setShowPairsModal(false);
-    setGeneratedPairs({ matchedPairs: [], unmatchedPairs: [] });
+    setSkippedGroups(new Set());
+    setAppState('initial');
     resetAll();
   };
 
@@ -110,7 +115,7 @@ export default function Home() {
     // Check if files have different extensions
     const extensions = uploadedFiles.map(file => file.name.split('.').pop()?.toLowerCase());
     const uniqueExtensions = new Set(extensions);
-    
+
     if (uniqueExtensions.size > 1) {
       toast.error("All files must have the same extension");
       return;
@@ -132,21 +137,29 @@ export default function Home() {
 
   const handleRemoveDuplicates = async () => {
     if (files.length > 0 && selectedColumns.length >= 2) {
-      setTrainingData(null);
-      setCurrentPairIndex(0);
-      setUserResponses({});
-      setSelectedRecords({});
-      resetAll();
-      setApiCalled(true);
-      setSelectedRecords({});
-      setShowConfetti(false);
-      const pairs = await processFile(
-        files[0],
-        null,
-        setTrainingData,
-        selectedColumns
-      );
-      setTrainingData(pairs);
+      setProcessingStatus({ isProcessing: true, message: 'Finding duplicates...' });
+      try {
+        const response = await processFile(
+          files[0],
+          null,
+          selectedColumns
+        );
+        if (response) {
+          setTrainingData(response[0].pairs);
+          setAppState(response[1]);
+          if (response[0].pairs && response[0].pairs.length > 0) {
+            const allColumns = Object.keys(response[0].pairs[0][0]).filter(
+              key => !['confidence_score', 'source_file'].includes(key)
+            );
+            setVisibleColumns(new Set(allColumns));
+          }
+        }
+      } catch (error) {
+        setErrorMessage('Error finding duplicates. Please try again.');
+        toast.error('Error finding duplicates');
+      } finally {
+        setProcessingStatus({ isProcessing: false, message: '' });
+      }
     } else {
       toast.error("Please select at least two columns for matching");
     }
@@ -178,20 +191,6 @@ export default function Home() {
 
       return newState;
     });
-  };
-
-  const handleRemoveAllDuplicates = () => {
-    const newSelectedRecords: Record<number, any[]> = {};
-
-    duplicates.forEach((group) => {
-      // Skip the first record (index 0) and select all others
-      const duplicatesToRemove = group.records.slice(1);
-      if (duplicatesToRemove.length > 0) {
-        newSelectedRecords[group.cluster_id] = duplicatesToRemove;
-      }
-    });
-
-    setSelectedRecords(newSelectedRecords);
   };
 
   const getSelectedRowsForGroup = (clusterId: number) => {
@@ -241,20 +240,34 @@ export default function Home() {
 
   const handleFinishTraining = async () => {
     if (files.length > 0) {
-      setIsFinishLoading(true);
-      // Filter out uncertain responses and format training data
-      const trainingPairs = Object.entries(userResponses)
-        .filter(([_, response]) => response !== "u")
-        .map(([index, response]) => ({
-          ...trainingData[parseInt(index)],
-          answer: response,
-        }));
+      setProcessingStatus({ isProcessing: true, message: 'Processing training data...' });
+      try {
+        const trainingPairs = Object.entries(userResponses)
+          .filter(([_, response]) => response !== "u")
+          .map(([index, response]) => ({
+            ...trainingData[parseInt(index)],
+            answer: response,
+          }));
 
-      setApiCalled(true);
-      setSelectedRecords({});
-      setShowConfetti(false);
-      await processFile(files[0], trainingPairs, setTrainingData);
-      setIsFinishLoading(false);
+        const response = await processFile(files[0], trainingPairs);
+        if (response) {
+          setAppState(response[1]);
+          setErrorMessage(null);
+          if (response[0].duplicates && response[0].duplicates.length > 0) {
+            const allColumns = Object.keys(response[0].duplicates[0].records[0]).filter(
+              key => !['confidence_score', 'source_file'].includes(key)
+            );
+            setVisibleColumns(new Set(allColumns));
+          }
+        }
+      } catch (error) {
+        setErrorMessage('Error processing training data. Please try again.');
+        toast.error('Error processing training data');
+        // Keep the training interface visible by not changing appState
+        // Reset processing status but keep the current state
+      } finally {
+        setProcessingStatus({ isProcessing: false, message: '' });
+      }
     }
   };
 
@@ -275,19 +288,19 @@ export default function Home() {
   };
 
   const handleMappingComplete = async (
-    mapping: Record<string, string>, 
-    sourceFile: number, 
+    mapping: Record<string, string>,
+    sourceFile: number,
     targetFile: number
   ) => {
     if (!sourceFile || !targetFile) return;
-    
+
     if (files[0].name.endsWith('.csv') && files[1].name.endsWith('.csv')) {
-      const mergedBlob = await mergeCSVFiles([files[sourceFile-1], files[targetFile-1]], mapping);
-      const mergedFile = new File([mergedBlob], `merged_${files[sourceFile-1].name.split('.')[0]}_${files[targetFile-1].name.split('.')[0]}.csv`, { type: "text/csv" });
+      const mergedBlob = await mergeCSVFiles([files[sourceFile - 1], files[targetFile - 1]], mapping);
+      const mergedFile = new File([mergedBlob], `merged_${files[sourceFile - 1].name.split('.')[0]}_${files[targetFile - 1].name.split('.')[0]}.csv`, { type: "text/csv" });
       setFiles([mergedFile]);
     } else if (files[0].name.endsWith('.xlsx') && files[1].name.endsWith('.xlsx')) {
-      const mergedBlob = await mergeXLSXFiles([files[sourceFile-1], files[targetFile-1]], mapping);
-      const mergedFile = new File([mergedBlob], `merged_${files[sourceFile-1].name.split('.')[0]}_${files[targetFile-1].name.split('.')[0]}.xlsx`, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const mergedBlob = await mergeXLSXFiles([files[sourceFile - 1], files[targetFile - 1]], mapping);
+      const mergedFile = new File([mergedBlob], `merged_${files[sourceFile - 1].name.split('.')[0]}_${files[targetFile - 1].name.split('.')[0]}.xlsx`, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       setFiles([mergedFile]);
     }
   };
@@ -301,18 +314,7 @@ export default function Home() {
       Object.keys(userResponses).length > 0
     ) {
       handleFinishTraining();
-      return (
-        <Card className="mb-8">
-          <CardContent className="flex items-center justify-center p-8">
-            <div className="text-center">
-              <div className="mb-4">Processing your responses...</div>
-              <div className="relative h-2 overflow-hidden rounded-full bg-secondary w-64">
-                <div className="absolute inset-0 w-1/3 bg-primary animate-loading-bar"></div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      );
+      return null; // Don't show loading state here, it's handled by processingStatus
     }
 
     if (currentPairIndex >= trainingData.length) return null;
@@ -333,6 +335,19 @@ export default function Home() {
 
     const currentPair = trainingData[currentPairIndex];
 
+    // Add null check for currentPair
+    if (!currentPair || !currentPair[0] || !currentPair[1]) {
+      return (
+        <Alert className="mb-4">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Invalid Training Data</AlertTitle>
+          <AlertDescription>
+            The training data appears to be invalid. Please try again.
+          </AlertDescription>
+        </Alert>
+      );
+    }
+
     // Count yes and no responses separately
     const yesResponses = Object.values(userResponses).filter(
       (r) => r === "y"
@@ -347,43 +362,36 @@ export default function Home() {
       yesResponses >= 2 && noResponses >= 2 && totalResponses >= 15;
 
     return (
-      <Card className="mb-8 border-2 border-muted">
-        <CardHeader>
-          <CardTitle>Are these records duplicates?</CardTitle>
-          <div className="text-sm text-muted-foreground mt-2">
-            <p>
-              Progress: {totalResponses}/15 responses (Yes: {yesResponses}/5,
-              No: {noResponses}/5)
-            </p>
-            {!hasEnoughResponses && (
-              <p className="text-destructive mt-1">
-                Need at least 5 of each response type and 15 total responses
+      <div className="space-y-4">
+        <Card className="mb-4">
+          <CardHeader>
+            <CardTitle>Training Progress</CardTitle>
+            <div className="text-sm text-muted-foreground mt-2">
+              <p>
+                Progress: {totalResponses}/15 responses (Yes: {yesResponses}/5,
+                No: {noResponses}/5)
               </p>
-            )}
-          </div>
-        </CardHeader>
-        <CardFooter className="flex justify-center gap-4">
-          {isFinishLoading ? (
-            <div className="flex items-center gap-2">
-              <Button disabled className="flex items-center gap-2">
-                <div className="animate-spin">
-                  <Loader2 className="h-4 w-4" />
-                </div>
-                Processing...
-              </Button>
+              {!hasEnoughResponses && (
+                <p className="text-destructive mt-1">
+                  Need at least 5 of each response type and 15 total responses
+                </p>
+              )}
             </div>
-          ) : (
-            <>
+          </CardHeader>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-center gap-4">
               <Button
                 onClick={() => handleTrainingResponse("y")}
-                className="bg-green-600 hover:bg-green-700 text-white font-medium flex items-center gap-2"
+                className="min-w-[150px] bg-green-600 hover:bg-green-700 text-white font-medium flex items-center gap-2"
+                disabled={processingStatus.isProcessing}
               >
                 <span className="text-lg">✓</span>
                 Yes, Duplicate
               </Button>
               <Button
                 onClick={() => handleTrainingResponse("n")}
-                className="bg-red-600 hover:bg-red-700 text-white font-medium flex items-center gap-2"
+                className="min-w-[150px] bg-red-600 hover:bg-red-700 text-white font-medium flex items-center gap-2"
+                disabled={processingStatus.isProcessing}
               >
                 <span className="text-lg">✕</span>
                 No, Different
@@ -391,7 +399,8 @@ export default function Home() {
               <Button
                 onClick={() => handleTrainingResponse("u")}
                 variant="secondary"
-                className="bg-gray-200 hover:bg-gray-300 text-gray-700 font-medium flex items-center gap-2"
+                className="min-w-[150px] bg-gray-200 hover:bg-gray-300 text-gray-700 font-medium flex items-center gap-2"
+                disabled={processingStatus.isProcessing}
               >
                 <span className="text-lg">?</span>
                 Not Sure
@@ -399,62 +408,66 @@ export default function Home() {
               {hasEnoughResponses && (
                 <Button
                   onClick={handleFinishTraining}
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-medium flex items-center gap-2"
+                  className="min-w-[150px] bg-blue-600 hover:bg-blue-700 text-white font-medium flex items-center gap-2"
+                  disabled={processingStatus.isProcessing}
                 >
                   <span className="text-lg">→</span>
                   Complete Training
                 </Button>
               )}
-            </>
-          )}
-        </CardFooter>
-        <CardContent>
-          <div className="rounded-lg border overflow-hidden">
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent bg-muted/50">
-                    <TableHead className="text-xs font-bold whitespace-nowrap">
-                      Field
-                    </TableHead>
-                    <TableHead className="text-xs font-bold whitespace-nowrap">
-                      Record 1
-                    </TableHead>
-                    <TableHead className="text-xs font-bold whitespace-nowrap">
-                      Record 2
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {Object.keys(currentPair[0]).map((key) => (
-                    <TableRow key={key} className="hover:bg-accent">
-                      <TableCell className="text-xs py-2 font-medium text-muted-foreground">
-                        {key}
-                      </TableCell>
-                      {[0, 1].map((index) => (
-                        <TableCell
-                          key={`${key}-${index}`}
-                          className="text-xs py-2"
-                        >
-                          {currentPair[index][key] ? (
-                            currentPair[index][key] === "nan" ? (
-                              ""
-                            ) : (
-                              (currentPair[index][key] as string)
-                            )
-                          ) : (
-                            <em className="text-muted-foreground">Empty</em>
-                          )}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent>
+            <div className="rounded-lg border overflow-hidden">
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent bg-muted/50">
+                      <TableHead className="text-xs font-bold whitespace-nowrap">
+                        Field
+                      </TableHead>
+                      <TableHead className="text-xs font-bold whitespace-nowrap">
+                        Record 1
+                      </TableHead>
+                      <TableHead className="text-xs font-bold whitespace-nowrap">
+                        Record 2
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {Object.keys(currentPair[0]).map((key) => (
+                      <TableRow key={key} className="hover:bg-accent">
+                        <TableCell className="text-xs py-2 font-medium text-muted-foreground">
+                          {key}
+                        </TableCell>
+                        {[0, 1].map((index) => (
+                          <TableCell
+                            key={`${key}-${index}`}
+                            className="text-xs py-2"
+                          >
+                            {currentPair[index][key] ? (
+                              currentPair[index][key] === "nan" ? (
+                                ""
+                              ) : (
+                                (currentPair[index][key] as string)
+                              )
+                            ) : (
+                              <em className="text-muted-foreground">Empty</em>
+                            )}
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     );
   };
 
@@ -562,161 +575,150 @@ export default function Home() {
     }
   };
 
-  const generatePairsFromGroups = () => {
-    const matchedPairs: Array<[any, any]> = [];
-    const unmatchedPairs: Array<[any, any]> = [];
-    
-    getSortedDuplicates().forEach(group => {
-      const selectedForDeletion = selectedRecords[group.cluster_id] || [];
-      const keptRecords = group.records.filter(record => 
-        !selectedForDeletion.some(r => r.record_id === record.record_id)
-      );
-      
-      // Generate matched pairs from kept records
-      for (let i = 0; i < keptRecords.length; i++) {
-        for (let j = i + 1; j < keptRecords.length; j++) {
-          matchedPairs.push([keptRecords[i], keptRecords[j]]);
+  // Add skip group functionality
+  const handleSkipGroup = () => {
+    const currentGroup = getSortedDuplicates()[currentGroupIndex];
+    if (currentGroup) {
+      setSkippedGroups(prev => {
+        const newSkipped = new Set(prev);
+        newSkipped.add(currentGroup.cluster_id);
+        return newSkipped;
+      });
+      handleNextGroup();
+      toast.success('Group skipped');
+    }
+  };
+
+  const handleUnskipGroup = () => {
+    const currentGroup = getSortedDuplicates()[currentGroupIndex];
+    if (currentGroup) {
+      setSkippedGroups(prev => {
+        const newSkipped = new Set(prev);
+        newSkipped.delete(currentGroup.cluster_id);
+        return newSkipped;
+      });
+      toast.success('Group unskipped');
+    }
+  };
+
+  const generatePairsFromGroups = async () => {
+    const previousState = appState; // Store the previous state
+    setProcessingStatus({ isProcessing: true, message: 'Reprocessing with new training data...' });
+    try {
+      const matchedPairs: Array<[any, any]> = [];
+      const unmatchedPairs: Array<[any, any]> = [];
+
+      const processedGroups = getSortedDuplicates()
+        .slice(0, currentGroupIndex)
+        .filter(group => !skippedGroups.has(group.cluster_id));
+
+      processedGroups.forEach(group => {
+        const selectedForDeletion = selectedRecords[group.cluster_id] || [];
+        const keptRecords = group.records.filter(record =>
+          !selectedForDeletion.some(r => r.record_id === record.record_id)
+        );
+
+        // Generate matched pairs from kept records
+        for (let i = 0; i < keptRecords.length; i++) {
+          for (let j = i + 1; j < keptRecords.length; j++) {
+            matchedPairs.push([keptRecords[i], keptRecords[j]]);
+          }
         }
-      }
-      
-      // Generate unmatched pairs between kept and deleted records
-      keptRecords.forEach(keptRecord => {
-        selectedForDeletion.forEach(deletedRecord => {
-          unmatchedPairs.push([keptRecord, deletedRecord]);
+
+        // Generate unmatched pairs between kept and deleted records
+        keptRecords.forEach(keptRecord => {
+          selectedForDeletion.forEach(deletedRecord => {
+            unmatchedPairs.push([keptRecord, deletedRecord]);
+          });
         });
       });
-    });
 
-    setGeneratedPairs({ matchedPairs, unmatchedPairs });
-    setShowPairsModal(true);
+      // Get previous training pairs with answers
+      const previousMatchedPairs = Object.entries(userResponses)
+        .filter(([_, response]) => response === "y")
+        .map(([index]) => ({
+          '0': trainingData[parseInt(index)][0],
+          '1': trainingData[parseInt(index)][1],
+          answer: 'y'
+        }));
+
+      const previousUnmatchedPairs = Object.entries(userResponses)
+        .filter(([_, response]) => response === "n")
+        .map(([index]) => ({
+          '0': trainingData[parseInt(index)][0],
+          '1': trainingData[parseInt(index)][1],
+          answer: 'n'
+        }));
+
+      const processedGroupCount = processedGroups.length;
+      const skippedGroupCount = currentGroupIndex + 1 - processedGroupCount;
+
+      // Console log all pairs
+      console.log(`=== New Matched Pairs from ${processedGroupCount} processed groups (${skippedGroupCount} groups skipped) ===`, matchedPairs.length);
+      matchedPairs.forEach((pair, index) => {
+        console.log(`Pair ${index + 1}:`, pair);
+      });
+
+      console.log(`\n=== New Unmatched Pairs from ${processedGroupCount} processed groups (${skippedGroupCount} groups skipped) ===`, unmatchedPairs.length);
+      unmatchedPairs.forEach((pair, index) => {
+        console.log(`Pair ${index + 1}:`, pair);
+      });
+
+      console.log('\n=== Previous Training Matched Pairs ===', previousMatchedPairs.length);
+      previousMatchedPairs.forEach((pair, index) => {
+        console.log(`Pair ${index + 1}:`, pair);
+      });
+
+      console.log('\n=== Previous Training Unmatched Pairs ===', previousUnmatchedPairs.length);
+      previousUnmatchedPairs.forEach((pair, index) => {
+        console.log(`Pair ${index + 1}:`, pair);
+      });
+
+      // Prepare training data from both new and previous pairs
+      const newTrainingPairs = [
+        ...matchedPairs.map(([record1, record2]) => ({
+          '0': record1,
+          '1': record2,
+          answer: 'y'
+        })),
+        ...unmatchedPairs.map(([record1, record2]) => ({
+          '0': record1,
+          '1': record2,
+          answer: 'n'
+        })),
+        ...previousMatchedPairs,
+        ...previousUnmatchedPairs
+      ];
+
+      const result = await processFile(
+        files[0],
+        newTrainingPairs,
+        selectedColumns,
+        true
+      );
+      
+      if (result) {
+        // Only reset states after successful processing
+        setSelectedRecords({});
+        setCurrentGroupIndex(0);
+        setMaxVisitedGroupIndex(0);
+        setSkippedGroups(new Set());
+        
+        setAppState(result[1]);
+        setErrorMessage(null);
+        toast.success('File reprocessed with new training pairs');
+      }
+    } catch (error) {
+      setErrorMessage('Error reprocessing data. Please try again.');
+      toast.error('Error reprocessing file');
+      // Restore the previous state
+      setAppState(previousState);
+      // No need to restore other states as they weren't reset
+    } finally {
+      setProcessingStatus({ isProcessing: false, message: '' });
+    }
   };
 
-  const PairsModal = () => {
-    if (!showPairsModal) return null;
-
-    // Get previous training pairs
-    const previousMatchedPairs = Object.entries(userResponses)
-      .filter(([_, response]) => response === "y")
-      .map(([index]) => trainingData[parseInt(index)]);
-
-    const previousUnmatchedPairs = Object.entries(userResponses)
-      .filter(([_, response]) => response === "n")
-      .map(([index]) => trainingData[parseInt(index)]);
-
-    return (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-        <Card className="w-full max-w-4xl max-h-[80vh] overflow-y-auto">
-          <CardHeader>
-            <CardTitle>Generated Pairs Analysis</CardTitle>
-            <Button 
-              variant="ghost" 
-              className="absolute right-2 top-2"
-              onClick={() => setShowPairsModal(false)}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="space-y-4">
-              <h3 className="font-semibold">New Matched Pairs ({generatedPairs.matchedPairs.length})</h3>
-              {generatedPairs.matchedPairs.map((pair, idx) => (
-                <div key={idx} className="p-2 border rounded">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      {Object.entries(pair[0]).map(([key, value]) => (
-                        <div key={key} className="text-sm">
-                          <span className="font-medium">{key}:</span> {String(value)}
-                        </div>
-                      ))}
-                    </div>
-                    <div className="space-y-1">
-                      {Object.entries(pair[1]).map(([key, value]) => (
-                        <div key={key} className="text-sm">
-                          <span className="font-medium">{key}:</span> {String(value)}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-            
-            <div className="space-y-4">
-              <h3 className="font-semibold">New Unmatched Pairs ({generatedPairs.unmatchedPairs.length})</h3>
-              {generatedPairs.unmatchedPairs.map((pair, idx) => (
-                <div key={idx} className="p-2 border rounded">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      {Object.entries(pair[0]).map(([key, value]) => (
-                        <div key={key} className="text-sm">
-                          <span className="font-medium">{key}:</span> {String(value)}
-                        </div>
-                      ))}
-                    </div>
-                    <div className="space-y-1">
-                      {Object.entries(pair[1]).map(([key, value]) => (
-                        <div key={key} className="text-sm">
-                          <span className="font-medium">{key}:</span> {String(value)}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="space-y-4">
-              <h3 className="font-semibold">Previous Training Matched Pairs ({previousMatchedPairs.length})</h3>
-              {previousMatchedPairs.map((pair, idx) => (
-                <div key={idx} className="p-2 border rounded">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      {Object.entries(pair[0]).map(([key, value]) => (
-                        <div key={key} className="text-sm">
-                          <span className="font-medium">{key}:</span> {String(value)}
-                        </div>
-                      ))}
-                    </div>
-                    <div className="space-y-1">
-                      {Object.entries(pair[1]).map(([key, value]) => (
-                        <div key={key} className="text-sm">
-                          <span className="font-medium">{key}:</span> {String(value)}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="space-y-4">
-              <h3 className="font-semibold">Previous Training Unmatched Pairs ({previousUnmatchedPairs.length})</h3>
-              {previousUnmatchedPairs.map((pair, idx) => (
-                <div key={idx} className="p-2 border rounded">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      {Object.entries(pair[0]).map(([key, value]) => (
-                        <div key={key} className="text-sm">
-                          <span className="font-medium">{key}:</span> {String(value)}
-                        </div>
-                      ))}
-                    </div>
-                    <div className="space-y-1">
-                      {Object.entries(pair[1]).map(([key, value]) => (
-                        <div key={key} className="text-sm">
-                          <span className="font-medium">{key}:</span> {String(value)}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  };
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-background via-muted/50 to-background">
@@ -730,7 +732,7 @@ export default function Home() {
           </p>
         </div>
 
-        {!trainingData && !duplicates.length && (
+        {appState === 'initial' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
             <div className="space-y-4">
               <Card className="border-none shadow-md h-full">
@@ -800,36 +802,49 @@ export default function Home() {
                 onMappingComplete={handleMappingComplete}
                 setAvailableColumns={setAvailableColumns}
               />
-            ) : null} 
-              <FilePreview
-                file={files[0]}
-                hidden={files.length > 1}
-                setAvailableColumns={setAvailableColumns}
-              />
-            
+            ) : null}
+            <FilePreview
+              file={files[0]}
+              hidden={files.length > 1}
+              setAvailableColumns={setAvailableColumns}
+            />
+
           </div>
         )}
 
         {/* Training interface */}
-        {trainingData && !duplicates.length && (
-          <div className="flex justify-end mb-4">
-            <Button
-              variant="destructive"
-              onClick={handleClearAll}
-              className="button-hover shadow-md"
-            >
-              <RotateCcw className="mr-2 h-4 w-4" />
-              Reset
-            </Button>
+        {appState === 'training' && (
+          <>
+            <div className="flex justify-end mb-4">
+              <Button
+                variant="destructive"
+                onClick={handleClearAll}
+                className="button-hover shadow-md"
+              >
+                <RotateCcw className="mr-2 h-4 w-4" />
+                Reset
+              </Button>
+            </div>
+            {renderTrainingInterface()}
+          </>
+        )}
+
+        {processingStatus.isProcessing && (
+          <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
+            <Card className="w-[300px]">
+              <CardContent className="flex flex-col items-center justify-center p-6">
+                <Loader2 className="h-8 w-8 animate-spin mb-4" />
+                <p className="text-lg font-medium mb-2">{processingStatus.message}</p>
+              </CardContent>
+            </Card>
           </div>
         )}
-        {trainingData && !duplicates.length && renderTrainingInterface()}
 
-        {error && (
-          <Alert variant="destructive" className="mb-4 glass-effect">
+        {errorMessage && (
+          <Alert variant="destructive" className="fixed top-4 right-4 w-auto z-50 shadow-lg">
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>Error</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
+            <AlertDescription>{errorMessage}</AlertDescription>
           </Alert>
         )}
 
@@ -837,7 +852,7 @@ export default function Home() {
           !isLoading &&
           files.length > 0 &&
           apiCalled &&
-          !trainingData && (
+          appState !== 'training' && (
             <div className="text-center p-8 bg-white/5 backdrop-blur-sm rounded-lg border border-muted shadow-lg">
               <div className="inline-block rounded-full bg-green-100 p-3 animate-float">
                 <CheckCircle2 className="h-6 w-6 text-green-600" />
@@ -848,7 +863,7 @@ export default function Home() {
             </div>
           )}
 
-        {duplicates.length > 0 && (
+        {appState === 'reviewing' && duplicates.length > 0 && (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
@@ -863,74 +878,151 @@ export default function Home() {
                   <RotateCcw className="mr-2 h-4 w-4" />
                   Reset
                 </Button>
-                {maxVisitedGroupIndex >= 5 && (
-                  <Button
-                    onClick={generatePairsFromGroups}
-                    disabled={currentGroupIndex < 5}
-                    variant="secondary"
-                    className="button-hover shadow-md"
-                  >
-                    Reprocess Pairs
-                  </Button>
-                )}
               </div>
-              <div className="flex items-center gap-4">
-                <div className="flex gap-2">
+              <div className="flex gap-2">
+                <Button
+                  onClick={downloadWithDuplicates}
+                  variant="outline"
+                  className="button-hover shadow-md flex items-center gap-2"
+                  title="Download original file with all records"
+                >
+                  <Download className="h-4 w-4" />
+                  Download Original
+                </Button>
+                <Button
+                  onClick={handleDownloadDeduplicated}
+                  className="bg-gradient-to-r from-green-600 to-green-500 hover:from-green-700 hover:to-green-600 text-white button-hover shadow-md flex items-center gap-2"
+                  title="Download file with selected duplicates removed"
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  Download Clean File
+                </Button>
+              </div>
+            </div>
+
+            {/* Column Selection with MultiSelect */}
+            <div className="w-full flex justify-end">
+              <div className="w-fit">
+                <MultiSelect
+                  options={Object.keys(duplicates[0].records[0])
+                    .filter(key => !['confidence_score', 'source_file'].includes(key))
+                    .map(column => ({
+                      label: column,
+                      value: column
+                    }))}
+                  defaultValue={Array.from(visibleColumns)}
+                  onValueChange={(values: string[]) => {
+                    setVisibleColumns(new Set(values));
+                  }}
+                  placeholder="Select columns to display"
+                  variant="secondary"
+                  className="min-w-[200px] max-w-fit"
+                />
+              </div>
+            </div>
+
+            {/* Navigation Controls */}
+            <Card className="mb-4">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-center gap-4">
                   <Button
-                    onClick={downloadWithDuplicates}
+                    onClick={handlePreviousGroup}
+                    disabled={currentGroupIndex === 0}
                     variant="outline"
-                    className="button-hover shadow-md flex items-center gap-2"
-                    title="Download original file with all records"
+                    className="min-w-[120px]"
                   >
-                    <Download className="h-4 w-4" />
-                    Download Original
+                    <ChevronLeft className="h-4 w-4 mr-2" />
+                    Previous Cluster
                   </Button>
+
+                  {skippedGroups.has(getSortedDuplicates()[currentGroupIndex]?.cluster_id) ? (
+                    <Button
+                      onClick={handleUnskipGroup}
+                      variant="secondary"
+                      size="sm"
+                      className="min-w-[100px]"
+                    >
+                      <Undo2 className="h-4 w-4 mr-2" />
+                      Unskip
+                    </Button>
+                  ) : (
+                    <Button
+                      onClick={handleSkipGroup}
+                      variant="secondary"
+                      size="sm"
+                      className="min-w-[100px]"
+                    >
+                      <SkipForward className="h-4 w-4 mr-2" />
+                      Skip
+                    </Button>
+                  )}
+
                   <Button
-                    onClick={handleDownloadDeduplicated}
-                    className="bg-gradient-to-r from-green-600 to-green-500 hover:from-green-700 hover:to-green-600 text-white button-hover shadow-md flex items-center gap-2"
-                    title="Download file with selected duplicates removed"
+                    onClick={handleNextGroup}
+                    disabled={currentGroupIndex === getSortedDuplicates().length - 1}
+                    variant="outline"
+                    className="min-w-[120px]"
                   >
-                    <CheckCircle2 className="h-4 w-4" />
-                    Download Clean File
+                    Merge Cluster
+                    <ChevronRight className="h-4 w-4 ml-2" />
                   </Button>
+
+                  {maxVisitedGroupIndex >= 5 && (
+                    <Button
+                      onClick={generatePairsFromGroups}
+                      disabled={currentGroupIndex < 5 || processingStatus.isProcessing}
+                      variant="secondary"
+                      className="min-w-[150px] bg-blue-600 hover:bg-blue-700 text-white"
+                    >
+                      Reprocess Pairs
+                    </Button>
+                  )}
                 </div>
-              </div>
-            </div>
-            <div className="flex justify-between items-center gap-4 mb-4">
-              <Button 
-                onClick={handlePreviousGroup}
-                disabled={currentGroupIndex === 0}
-                variant="outline"
-              >
-                Previous Group
-              </Button>
-              <div className="text-sm text-muted-foreground">
-                Confidence Score: {getSortedDuplicates()[currentGroupIndex]?.confidence_score?.toFixed(2) || 'N/A'}
-              </div>
-              <Button 
-                onClick={handleNextGroup}
-                disabled={currentGroupIndex === getSortedDuplicates().length - 1}
-                variant="outline"
-              >
-                Next Group
-              </Button>
-            </div>
+              </CardContent>
+            </Card>
+
             <div className="space-y-4">
               {getSortedDuplicates().slice(currentGroupIndex, currentGroupIndex + 1).map((group) => (
-                <DuplicateGroup
-                  key={group.cluster_id}
-                  group={group}
-                  onSelectRow={handleSelectRow}
-                  columnWidths={columnWidths}
-                  selectedRows={getSelectedRowsForGroup(group.cluster_id)}
-                />
+                <div key={group.cluster_id}>
+                  {skippedGroups.has(group.cluster_id) && (
+                    <Alert className="mb-2">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertTitle>Skipped Group</AlertTitle>
+                      <AlertDescription>
+                        This group is currently skipped and will not be included in pair generation
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  <DuplicateGroup
+                    key={group.cluster_id}
+                    group={group}
+                    onSelectRow={handleSelectRow}
+                    columnWidths={columnWidths}
+                    selectedRows={getSelectedRowsForGroup(group.cluster_id)}
+                    visibleColumns={visibleColumns}
+                  />
+                </div>
               ))}
             </div>
           </div>
         )}
-        {showPairsModal && <PairsModal />}
       </div>
       {showConfetti && <Confetti />}
+
+      <FileNameDialog
+        isOpen={isFileNameDialogOpen}
+        onClose={() => setIsFileNameDialogOpen(false)}
+        onConfirm={(fileName) => {
+          if (pendingDownload) {
+            handleDownload(pendingDownload.content, fileName);
+          }
+        }}
+        defaultFileName={
+          pendingDownload?.type === 'clean' 
+            ? 'deduplicated_records' 
+            : 'original_records'
+        }
+      />
     </main>
   );
 }

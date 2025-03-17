@@ -54,15 +54,17 @@ async def dedupe_files(
     files: List[UploadFile] = File(...),
     similarity_threshold: float = Form(0.6),
     training_data: str = Form(None),
-    selected_columns: str = Form(None)
-):
-    response_obj = {
-                "status": "success",
-                "duplicates": test_response
-            }
-    return JSONResponse(
-            content=json.loads(json.dumps(response_obj, cls=NumpyEncoder))
-        )
+    selected_columns: str = Form(None),
+    is_reprocessing: bool = Form(False)
+    ):
+    print(f"Received is_reprocessing: {is_reprocessing}, training_data: {training_data}, selected_columns: {selected_columns}")
+    # response_obj = {
+    #             "status": "success",
+    #             "duplicates": test_response
+    #         }
+    # return JSONResponse(
+    #         content=json.loads(json.dumps(response_obj, cls=NumpyEncoder))
+    #     )
    
     try:
         if selected_columns:
@@ -112,9 +114,13 @@ async def dedupe_files(
         # Run deduplication
         result = find_duplicates_in_files(
             file_paths=temp_files,
-            config=config,
+            config={
+                **config,
+                'is_reprocessing': is_reprocessing
+            },
             training_data=training_data
         )
+
 
         if "pairs" in result:
             response_obj = {
@@ -126,6 +132,8 @@ async def dedupe_files(
                 "status": "success",
                 "duplicates": result
             }
+
+        print(f"Response object: {response_obj}")
 
         # Clean up temporary files
         for temp_file in temp_files:

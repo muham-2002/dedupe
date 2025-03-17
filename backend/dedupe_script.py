@@ -194,6 +194,7 @@ def find_duplicates_in_files(
     }
     
     config = {**default_config, **(config or {})}
+    is_reprocessing = config.get('is_reprocessing', False)
     
     # Validate input files
     for file_path in file_paths:
@@ -211,17 +212,53 @@ def find_duplicates_in_files(
     if len(all_data) == 0:
         raise ValueError("No data found in input files")
     
-    # Create a sample for training using first max_training_rows
-    training_data_df = all_data.head(config['max_training_rows'])
-    training_data_d = convert_df_to_dedupe_format(training_data_df)
-    
-    # Convert full data to dedupe format (will be used later for finding duplicates)
+    # Convert full data to dedupe format
     full_data_d = convert_df_to_dedupe_format(all_data)
+    
+    # Handle training data selection based on reprocessing flag
+    if is_reprocessing and training_data:
+        logger.info("Reprocessing mode: Using records from training data")
+        training_record_ids = set()
+        training_records = {}  # Store actual records from training data
+        
+        # First, collect all records from training data
+        for pair in training_data:
+            record1 = pair['0']
+            record2 = pair['1']
+            
+            # Find and store matching records from full_data_d
+            for record_id, record in full_data_d.items():
+                if all(str(record.get(k)) == str(record1.get(k)) for k in record1.keys() if k not in ['confidence_score', 'source_file', 'record_id']):
+                    training_record_ids.add(record_id)
+                    training_records[record_id] = record
+                if all(str(record.get(k)) == str(record2.get(k)) for k in record2.keys() if k not in ['confidence_score', 'source_file', 'record_id']):
+                    training_record_ids.add(record_id)
+                    training_records[record_id] = record
+        
+        logger.info(f"Found {len(training_record_ids)} records from training pairs")
+        
+        # If we have less than max_training_rows records, add random ones
+        remaining_slots = config['max_training_rows'] - len(training_record_ids)
+        if remaining_slots > 0:
+            logger.info(f"Adding {remaining_slots} random records to reach {config['max_training_rows']} training records")
+            available_ids = set(full_data_d.keys()) - training_record_ids
+            additional_ids = set(list(available_ids)[:remaining_slots])
+            for record_id in additional_ids:
+                training_records[record_id] = full_data_d[record_id]
+            training_record_ids.update(additional_ids)
+        
+        # Create training data dictionary using stored records
+        training_data_d = training_records
+        logger.info(f"Using {len(training_data_d)} records for training")
+    else:
+        # Use first max_training_rows as before
+        training_data_df = all_data.head(config['max_training_rows'])
+        training_data_d = convert_df_to_dedupe_format(training_data_df)
     
     # Print data summary
     logger.info("Data Summary:")
     logger.info(f"Total records: {len(all_data)}")
-    logger.info(f"Records used for training: {len(training_data_df)}")
+    logger.info(f"Records used for training: {len(training_data_d)}")
     for file_path in file_paths:
         file_data = all_data[all_data['source_file'] == os.path.basename(file_path)]
         logger.info(f"- {file_path}: {len(file_data)} records")

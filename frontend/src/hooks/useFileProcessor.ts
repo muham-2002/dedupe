@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { processExcelFile, createDeduplicatedFile } from '@/utils/fileUtils'
 import { GroupType } from '@/types'
 import toast from 'react-hot-toast'
 import axios from 'axios'
@@ -13,9 +12,19 @@ export function useFileProcessor() {
   const [originalFileData, setOriginalFileData] = useState<any>([])
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [isFileNameDialogOpen, setIsFileNameDialogOpen] = useState(false)
+  const [pendingDownload, setPendingDownload] = useState<{
+    content: string;
+    type: 'original' | 'clean';
+  } | null>(null)
   const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000'
 
-  const processFile = async (file: File, trainingData: any, setTrainingData: any, selectedColumns?: string[]) => {
+  const processFile = async (
+    file: File,
+    trainingData: any,
+    selectedColumns?: string[],
+    isReprocessing: boolean = false
+  ) => {
     try {
       setIsLoading(true)
       setError(null)
@@ -27,6 +36,9 @@ export function useFileProcessor() {
       formData.append('files', file)
       formData.append('similarity_threshold', '0.2')
       formData.append('training_data', JSON.stringify(trainingData))
+      if (isReprocessing) {
+        formData.append('is_reprocessing', 'true')
+      }
       selectedColumns != undefined ? formData.append('selected_columns', JSON.stringify(selectedColumns)) : null
 
       if (originalFile) {
@@ -43,30 +55,32 @@ export function useFileProcessor() {
         responseType: 'json',
         maxRedirects: 0
       });
-      
+
 
       if (response.status !== 200) {
         throw new Error('Failed to process file')
       }
 
       const result = response.data
-      if (result.status === 'needs_training') {
-        return result.pairs
-      } else {
-        if (result.duplicates && result.duplicates.length > 0) {
-          setDuplicates(result.duplicates)
-          setTrainingData(null)
-        }
-        else{
-          toast.error("No duplicates found. Need more training data.")
-        }
-      }
-
       // Simulate progress
       for (let i = 0; i <= 100; i += 10) {
         setProgress(i)
         await new Promise((resolve) => setTimeout(resolve, 100))
       }
+      if (result.status === 'needs_training') {
+        return [result, 'training'];
+      } else {
+        if (result.duplicates && result.duplicates.length > 0) {
+          setDuplicates(result.duplicates)
+          return [result, 'reviewing'];
+        }
+        else {
+          toast.error("No duplicates found. Need more training data.")
+          return [result, 'training'];
+        }
+      }
+
+
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'An error occurred')
       setError(error instanceof Error ? error.message : 'An error occurred')
@@ -85,7 +99,7 @@ export function useFileProcessor() {
             const dataWithIds = results.data.map((row: any) => {
               const recordId = results.data.indexOf(row).toString();
               return {
-              ...row,
+                ...row,
                 record_id: recordId,
                 __source_file: file.name // Add source file name but don't expose it
               };
@@ -107,7 +121,7 @@ export function useFileProcessor() {
             const dataWithIds = jsonData.map((row: any) => {
               const recordId = jsonData.indexOf(row).toString();
               return {
-              ...row,
+                ...row,
                 record_id: recordId,
                 __source_file: file.name // Add source file name but don't expose it
               };
@@ -132,18 +146,32 @@ export function useFileProcessor() {
     setError(null)
   }
 
+  const handleDownload = (content: string, fileName: string) => {
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', fileName);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    setIsFileNameDialogOpen(false);
+    setPendingDownload(null);
+  };
+
   const downloadFile = async (recordsToRemove: number[]) => {
     try {
       // Create a set of records to remove for faster lookup
       const recordsToRemoveSet = new Set(recordsToRemove);
-      
+
       // Create a map of record_id to source file from originalFileData
       const recordIdToSourceFile = new Map(
         originalFileData.map((record: any) => [record.record_id, record.source_file ? record.source_file : record.__source_file])
       );
-      
+
       // Collect all records from duplicate groups
-      const processedRecords = duplicates.flatMap(group => 
+      const processedRecords = duplicates.flatMap(group =>
         group.records
           // Filter out records that are marked for removal
           .filter(record => !recordsToRemoveSet.has(+record.record_id))
@@ -158,52 +186,73 @@ export function useFileProcessor() {
 
       // Get all headers from the processed records except the special columns
       const specialColumns = ['cluster_id', 'confidence_score', 'source_file', '__source_file', 'record_id'];
-      
+
       const regularHeaders = Array.from(
         new Set(
           processedRecords.flatMap(record => Object.keys(record))
         )
       ).filter(header => !specialColumns.includes(header)).sort();
 
-      // Combine headers with special columns at the end (excluding __source_file)
-      const allHeaders = [...regularHeaders, 'record_id', 'cluster_id', 'confidence_score', 'source_file'];
+      // Combine headers with cluster_id first, then regular headers, then remaining special columns
+      const allHeaders = [
+        'cluster_id',
+        ...regularHeaders,
+        'record_id',
+        'confidence_score',
+        'source_file'
+      ];
+
+      // Process and format values while creating the array
+      const formatValue = (value: any) => {
+        if (value === null || value === undefined || value === 'N/A') {
+          return '';
+        }
+        const stringValue = String(value);
+        if (stringValue.includes(',') || stringValue.includes('\n') || stringValue.includes('"')) {
+          return `"${stringValue.replace(/"/g, '""')}"`;
+        }
+        return stringValue;
+      };
 
       // Convert records to CSV with consistent columns
       const csvContent = [
         allHeaders.join(','),
-        ...processedRecords.map(record => 
-          allHeaders.map(header => {
-            let value = record[header] ?? ''; 
-            // Remove 'N/A' values
-            if (value === 'N/A') {
-              value = '';
-            }
-            // Handle values that might contain commas, newlines, or quotes
-            if (typeof value === 'string' && (value.includes(',') || value.includes('\n') || value.includes('"'))) {
-              // Escape quotes and wrap in quotes
-              return `"${value.replace(/"/g, '""')}"`;
-            }
-            return value;
-          }).join(',')
-        )
+        ...processedRecords.map(record => {
+          // Create and format values in one pass
+          return [
+            formatValue(record['cluster_id']), // cluster_id first
+            ...regularHeaders.map(header => formatValue(record[header])), // regular columns
+            formatValue(record['record_id']), // special columns at the end
+            formatValue(record['confidence_score']),
+            formatValue(record['source_file'])
+          ].join(',');
+        })
       ].join('\n');
 
-      // Create and download the file
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', 'duplicate_groups.csv');
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+      setPendingDownload({
+        content: csvContent,
+        type: recordsToRemove.length > 0 ? 'clean' : 'original'
+      });
+      setIsFileNameDialogOpen(true);
+
     } catch (error) {
       console.error('Error downloading file:', error);
       toast.error('Error downloading file');
     }
   };
 
-  return { processFile, resetAll, duplicates, isLoading, downloadFile, progress, error }
+  return { 
+    processFile, 
+    resetAll, 
+    duplicates, 
+    isLoading, 
+    downloadFile, 
+    progress, 
+    error,
+    isFileNameDialogOpen,
+    setIsFileNameDialogOpen,
+    pendingDownload,
+    handleDownload
+  }
 }
 
