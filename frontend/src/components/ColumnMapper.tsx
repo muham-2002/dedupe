@@ -76,7 +76,7 @@ export default function ColumnMapper({
 
     setTargetColumns(targetColumns);
     setSourceColumns(sourceColumns);
-    setAvailableColumns([...new Set([...columns1, ...columns2])]);
+    setAvailableColumns(Array.from(new Set([...columns1, ...columns2])));
     setFileMeta({
       source: sourceMeta,
       target: targetMeta
