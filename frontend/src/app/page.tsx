@@ -963,7 +963,7 @@ export default function Home() {
                     variant="outline"
                     className="min-w-[120px]"
                   >
-                    Merge Cluster
+                    Confirm Cluster
                     <ChevronRight className="h-4 w-4 ml-2" />
                   </Button>
 
