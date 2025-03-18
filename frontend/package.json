@@ -5,9 +5,13 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "lint": "next lint"
   },
   "dependencies": {
+    "react": "^18",
+    "react-dom": "^18",
+    "next": "14.2.25",
     "@radix-ui/react-dialog": "^1.1.6",
     "@radix-ui/react-popover": "^1.1.6",
     "@radix-ui/react-progress": "^1.1.1",
@@ -18,11 +22,8 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.0.0",
     "lucide-react": "^0.471.2",
-    "next": "^14.2.13",
     "papaparse": "^5.5.1",
-    "react": "^18",
     "react-confetti": "^6.2.2",
-    "react-dom": "^18",
     "react-dropzone": "^14.3.5",
     "react-hot-toast": "^2.5.1",
     "tailwind-merge": "^2.6.0",
@@ -30,12 +31,11 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@types/node": "20.17.14",
-    "@types/papaparse": "^5.3.15",
-    "@types/react": "19.0.7",
-    "@types/react-dom": "^19",
+    "typescript": "^5",
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
     "postcss": "^8",
-    "tailwindcss": "^3.4.1",
-    "typescript": "5.7.3"
+    "tailwindcss": "^3.4.1"
   }
 }
