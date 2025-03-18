@@ -887,7 +887,7 @@ export default function Home() {
                   title="Download original file with all records"
                 >
                   <Download className="h-4 w-4" />
-                  Download Original
+                  Download All
                 </Button>
                 <Button
                   onClick={handleDownloadDeduplicated}
@@ -895,7 +895,7 @@ export default function Home() {
                   title="Download file with selected duplicates removed"
                 >
                   <CheckCircle2 className="h-4 w-4" />
-                  Download Clean File
+                  Download Cleansed File
                 </Button>
               </div>
             </div>
