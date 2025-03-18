@@ -6,7 +6,12 @@
   "builds": [
     {
       "src": "package.json",
-      "use": "@vercel/next"
+      "use": "@vercel/next",
+      "config": {
+        "react": {
+          "version": "18.2.0"
+        }
+      }
     }
   ]
 } 
