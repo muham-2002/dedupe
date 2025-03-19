@@ -22,6 +22,7 @@ import {
   Undo2,
   SkipForward,
   ChevronRight,
+  CircleHelp,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import dynamic from "next/dynamic";
@@ -46,6 +47,12 @@ import ColumnMapper from "@/components/ColumnMapper";
 import { mergeCSVFiles, mergeXLSXFiles } from "@/utils/fileUtils";
 import { MultiSelect } from "@/components/multi-select";
 import { FileNameDialog } from "@/components/FileNameDialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 const Confetti = dynamic(() => import("@/components/Confetti"), { ssr: false });
 
@@ -900,83 +907,103 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Column Selection with MultiSelect */}
-            <div className="w-full flex justify-end">
-              <div className="w-fit">
-                <MultiSelect
-                  options={Object.keys(duplicates[0].records[0])
-                    .filter(key => !['confidence_score', 'source_file'].includes(key))
-                    .map(column => ({
-                      label: column,
-                      value: column
-                    }))}
-                  defaultValue={Array.from(visibleColumns)}
-                  onValueChange={(values: string[]) => {
-                    setVisibleColumns(new Set(values));
-                  }}
-                  placeholder="Select columns to display"
-                  variant="secondary"
-                  className="min-w-[200px] max-w-fit"
-                />
-              </div>
-            </div>
-
             {/* Navigation Controls */}
             <Card className="mb-4">
               <CardContent className="p-4">
-                <div className="flex items-center justify-center gap-4">
-                  <Button
-                    onClick={handlePreviousGroup}
-                    disabled={currentGroupIndex === 0}
-                    variant="outline"
-                    className="min-w-[120px]"
-                  >
-                    <ChevronLeft className="h-4 w-4 mr-2" />
-                    Previous Cluster
-                  </Button>
+                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4">
+                  {/* Left empty space */}
+                  <div></div>
 
-                  {skippedGroups.has(getSortedDuplicates()[currentGroupIndex]?.cluster_id) ? (
+                  {/* Center content */}
+                  <div className="flex items-center justify-center gap-4">
                     <Button
-                      onClick={handleUnskipGroup}
-                      variant="secondary"
-                      size="sm"
-                      className="min-w-[100px]"
+                      onClick={handlePreviousGroup}
+                      disabled={currentGroupIndex === 0}
+                      variant="outline"
+                      className="min-w-[120px]"
                     >
-                      <Undo2 className="h-4 w-4 mr-2" />
-                      Unskip
+                      <ChevronLeft className="h-4 w-4 mr-2" />
+                      Previous Cluster
                     </Button>
-                  ) : (
-                    <Button
-                      onClick={handleSkipGroup}
-                      variant="secondary"
-                      size="sm"
-                      className="min-w-[100px]"
-                    >
-                      <SkipForward className="h-4 w-4 mr-2" />
-                      Skip
-                    </Button>
-                  )}
 
-                  <Button
-                    onClick={handleNextGroup}
-                    disabled={currentGroupIndex === getSortedDuplicates().length - 1}
-                    variant="outline"
-                    className="min-w-[120px]"
-                  >
-                    Confirm Cluster
-                    <ChevronRight className="h-4 w-4 ml-2" />
-                  </Button>
+                    {skippedGroups.has(getSortedDuplicates()[currentGroupIndex]?.cluster_id) ? (
+                      <Button
+                        onClick={handleUnskipGroup}
+                        variant="secondary"
+                        size="sm"
+                        className="min-w-[100px]"
+                      >
+                        <Undo2 className="h-4 w-4 mr-2" />
+                        Unskip
+                      </Button>
+                    ) : (
+                      <Button
+                        onClick={handleSkipGroup}
+                        variant="secondary"
+                        size="sm"
+                        className="min-w-[100px]"
+                      >
+                        <SkipForward className="h-4 w-4 mr-2" />
+                        Skip
+                      </Button>
+                    )}
 
-                  {maxVisitedGroupIndex >= 5 && (
                     <Button
-                      onClick={generatePairsFromGroups}
-                      disabled={currentGroupIndex < 5 || processingStatus.isProcessing}
-                      variant="secondary"
-                      className="min-w-[150px] bg-blue-600 hover:bg-blue-700 text-white"
+                      onClick={handleNextGroup}
+                      disabled={currentGroupIndex === getSortedDuplicates().length - 1}
+                      variant="outline"
+                      className="min-w-[120px]"
                     >
-                      Reprocess Pairs
+                      Confirm Cluster
+                      <ChevronRight className="h-4 w-4 ml-2" />
                     </Button>
-                  )}
+
+                    {maxVisitedGroupIndex >= 5 && (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          onClick={generatePairsFromGroups}
+                          disabled={currentGroupIndex < 5 || processingStatus.isProcessing}
+                          variant="secondary"
+                          className="min-w-[150px] bg-blue-600 hover:bg-blue-700 text-white"
+                        >
+                          Reprocess Pairs
+                        </Button>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div className="cursor-pointer">
+                                <CircleHelp className="h-4 w-4 text-muted-foreground" />
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p className="text-sm">
+                                Use Reprocess Pairs if you have removed records from processed pairs to ensure best deduplication
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right content */}
+                  <div className="flex justify-end">
+                    <MultiSelect
+                      options={Object.keys(duplicates[0].records[0])
+                        .filter(key => !['confidence_score', 'source_file'].includes(key))
+                        .map(column => ({
+                          label: column,
+                          value: column
+                        }))}
+                      defaultValue={Array.from(visibleColumns)}
+                      onValueChange={(values: string[]) => {
+                        setVisibleColumns(new Set(values));
+                      }}
+                      placeholder="Select columns to display"
+                      variant="secondary"
+                      className="min-w-[200px] max-w-fit"
+                    />
+                  </div>
                 </div>
               </CardContent>
             </Card>
